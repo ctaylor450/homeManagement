@@ -1,0 +1,47 @@
+{
+  "project_info": {
+    "project_number": "955299526376",
+    "project_id": "stoked-jigsaw-344918",
+    "storage_bucket": "stoked-jigsaw-344918.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:955299526376:android:46bb2ae4e1622487e1bb5d",
+        "android_client_info": {
+          "package_name": "com.example.home_management"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "955299526376-4k2rdnhl0bj0mqbodojettta2fdp0dg9.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.home_management",
+            "certificate_hash": "9c27eabf98d540d56bed6dbda3b0dc7ee9c09925"
+          }
+        },
+        {
+          "client_id": "955299526376-8o87c88o9s61rt1kgjhccdh00qjt5p46.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBacrsvYW-ObinLknC6G-8xPBHxekTxmNY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "955299526376-8o87c88o9s61rt1kgjhccdh00qjt5p46.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
