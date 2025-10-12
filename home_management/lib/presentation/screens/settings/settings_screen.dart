@@ -5,6 +5,7 @@ import '../../providers/auth_provider.dart';
 import '../../providers/household_provider.dart';
 import '../auth/login_screen.dart';
 import '../calendar/calander_settings_screen.dart';
+import '../../widgets/shared_calendar_settings_tile.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({Key? key}) : super(key: key);
@@ -128,6 +129,9 @@ class SettingsScreen extends ConsumerWidget {
               // TODO: Show members list
             },
           ),
+          // ============ NEW: Shared Calendar Settings ============
+          const SharedCalendarSettingsTile(),
+          // =======================================================
           ListTile(
             leading: const Icon(Icons.exit_to_app),
             title: const Text('Leave Household'),

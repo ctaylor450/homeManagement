@@ -140,4 +140,45 @@ class HouseholdRepository {
       rethrow;
     }
   }
+
+  // ============ NEW METHODS FOR SHARED CALENDAR ============
+
+  // Link shared Google Calendar to household
+  Future<void> linkSharedCalendar(String householdId, String calendarId) async {
+    try {
+      await _firestore
+          .collection(FirebaseConstants.householdsCollection)
+          .doc(householdId)
+          .update({'sharedGoogleCalendarId': calendarId});
+      print('Shared calendar linked to household: $calendarId');
+    } catch (e) {
+      print('Error linking shared calendar: $e');
+      rethrow;
+    }
+  }
+
+  // Unlink shared Google Calendar from household
+  Future<void> unlinkSharedCalendar(String householdId) async {
+    try {
+      await _firestore
+          .collection(FirebaseConstants.householdsCollection)
+          .doc(householdId)
+          .update({'sharedGoogleCalendarId': null});
+      print('Shared calendar unlinked from household');
+    } catch (e) {
+      print('Error unlinking shared calendar: $e');
+      rethrow;
+    }
+  }
+
+  // Get shared calendar ID
+  Future<String?> getSharedCalendarId(String householdId) async {
+    try {
+      final household = await getHouseholdById(householdId);
+      return household?.sharedGoogleCalendarId;
+    } catch (e) {
+      print('Error getting shared calendar ID: $e');
+      return null;
+    }
+  }
 }

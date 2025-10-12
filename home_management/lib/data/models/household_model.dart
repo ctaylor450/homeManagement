@@ -7,6 +7,7 @@ class HouseholdModel extends Equatable {
   final List<String> memberIds;
   final String inviteCode;
   final DateTime createdAt;
+  final String? sharedGoogleCalendarId; // NEW: Shared family calendar ID
 
   const HouseholdModel({
     required this.id,
@@ -14,6 +15,7 @@ class HouseholdModel extends Equatable {
     required this.memberIds,
     required this.inviteCode,
     required this.createdAt,
+    this.sharedGoogleCalendarId, // NEW
   });
 
   @override
@@ -23,6 +25,7 @@ class HouseholdModel extends Equatable {
         memberIds,
         inviteCode,
         createdAt,
+        sharedGoogleCalendarId, // NEW
       ];
 
   HouseholdModel copyWith({
@@ -31,6 +34,7 @@ class HouseholdModel extends Equatable {
     List<String>? memberIds,
     String? inviteCode,
     DateTime? createdAt,
+    String? sharedGoogleCalendarId, // NEW
   }) {
     return HouseholdModel(
       id: id ?? this.id,
@@ -38,6 +42,7 @@ class HouseholdModel extends Equatable {
       memberIds: memberIds ?? this.memberIds,
       inviteCode: inviteCode ?? this.inviteCode,
       createdAt: createdAt ?? this.createdAt,
+      sharedGoogleCalendarId: sharedGoogleCalendarId ?? this.sharedGoogleCalendarId, // NEW
     );
   }
 
@@ -49,6 +54,7 @@ class HouseholdModel extends Equatable {
       memberIds: List<String>.from(data['memberIds'] ?? []),
       inviteCode: data['inviteCode'] ?? '',
       createdAt: (data['createdAt'] as Timestamp).toDate(),
+      sharedGoogleCalendarId: data['sharedGoogleCalendarId'], // NEW
     );
   }
 
@@ -58,6 +64,7 @@ class HouseholdModel extends Equatable {
       'memberIds': memberIds,
       'inviteCode': inviteCode,
       'createdAt': Timestamp.fromDate(createdAt),
+      'sharedGoogleCalendarId': sharedGoogleCalendarId, // NEW
     };
   }
 }

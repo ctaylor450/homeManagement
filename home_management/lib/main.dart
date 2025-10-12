@@ -6,6 +6,7 @@ import 'core/services/notification_service.dart';
 import 'core/services/auto_sync_service.dart';
 import 'presentation/providers/auth_provider.dart';
 import 'presentation/providers/calendar_provider.dart';
+import 'presentation/providers/auto_sync_provider.dart'; // NEW IMPORT
 import 'presentation/screens/auth/login_screen.dart';
 import 'presentation/screens/home/home_screen.dart';
 import 'package:google_sign_in/google_sign_in.dart';
@@ -73,7 +74,11 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
 
   Future<void> _initializeAutoSync() async {
     try {
-      // Check if auto-sync is enabled
+      // Initialize shared calendar auto-sync (NEW)
+      // This will automatically sync the household's shared Google Calendar every 15 minutes
+      ref.read(sharedCalendarAutoSyncProvider);
+      
+      // Check if personal calendar auto-sync is enabled (EXISTING)
       final prefs = await ref.read(calendarPreferencesProvider.future);
       
       if (prefs.autoSyncEnabled) {
@@ -88,7 +93,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     // Stop existing service if any
     _autoSyncService?.dispose();
     
-    // Create new auto-sync service
+    // Create new auto-sync service for personal calendar
     _autoSyncService = AutoSyncService(
       onSync: () async {
         await ref.read(calendarActionsProvider).autoSyncIfDue();
@@ -101,7 +106,12 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
 
   Future<void> _performAutoSyncIfEnabled() async {
     try {
+      // Sync personal calendar (EXISTING)
       await ref.read(calendarActionsProvider).autoSyncIfDue();
+      
+      // Manually trigger shared calendar sync (NEW)
+      final sharedSync = ref.read(sharedCalendarAutoSyncProvider);
+      await sharedSync.manualSync();
     } catch (e) {
       debugPrint('Error in auto-sync: $e');
     }

@@ -3,6 +3,7 @@ import '../../data/repositories/household_repository.dart';
 import '../../data/models/household_model.dart';
 import '../../data/models/user_model.dart';
 import 'auth_provider.dart';
+import 'calendar_provider.dart';
 
 // Household repository provider
 final householdRepositoryProvider = Provider<HouseholdRepository>((ref) {
@@ -128,6 +129,70 @@ class HouseholdActions {
       return await repository.regenerateInviteCode(householdId);
     } catch (e) {
       print('Error regenerating invite code: $e');
+      rethrow;
+    }
+  }
+
+  // ============ NEW METHODS FOR SHARED CALENDAR ============
+
+  /// Link a shared Google Calendar to the household
+  Future<void> linkSharedCalendar(String calendarId) async {
+    try {
+      final householdId = ref.read(currentHouseholdIdProvider);
+      if (householdId == null) {
+        throw Exception('No household found');
+      }
+
+      final repository = ref.read(householdRepositoryProvider);
+      await repository.linkSharedCalendar(householdId, calendarId);
+
+      // Trigger initial sync
+      final syncService = ref.read(calendarSyncServiceProvider);
+      await syncService.syncSharedGoogleCalendar(householdId, calendarId);
+
+      print('Shared calendar linked and synced');
+    } catch (e) {
+      print('Error linking shared calendar: $e');
+      rethrow;
+    }
+  }
+
+  /// Unlink the shared Google Calendar from the household
+  Future<void> unlinkSharedCalendar() async {
+    try {
+      final householdId = ref.read(currentHouseholdIdProvider);
+      if (householdId == null) {
+        throw Exception('No household found');
+      }
+
+      final repository = ref.read(householdRepositoryProvider);
+      await repository.unlinkSharedCalendar(householdId);
+
+      print('Shared calendar unlinked');
+    } catch (e) {
+      print('Error unlinking shared calendar: $e');
+      rethrow;
+    }
+  }
+
+  /// Manually trigger sync of the shared calendar
+  Future<void> syncSharedCalendar() async {
+    try {
+      final household = await ref.read(currentHouseholdProvider.future);
+      
+      if (household == null || household.sharedGoogleCalendarId == null) {
+        throw Exception('No shared calendar linked');
+      }
+
+      final syncService = ref.read(calendarSyncServiceProvider);
+      await syncService.syncSharedGoogleCalendar(
+        household.id,
+        household.sharedGoogleCalendarId!,
+      );
+
+      print('Shared calendar synced successfully');
+    } catch (e) {
+      print('Error syncing shared calendar: $e');
       rethrow;
     }
   }
