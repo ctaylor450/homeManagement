@@ -7,7 +7,7 @@ import '../../widgets/loading_widget.dart';
 import '../../../core/theme/app_theme.dart';
 
 class CalendarSettingsScreen extends ConsumerStatefulWidget {
-  const CalendarSettingsScreen({Key? key}) : super(key: key);
+  const CalendarSettingsScreen({super.key});
 
   @override
   ConsumerState<CalendarSettingsScreen> createState() => _CalendarSettingsScreenState();
@@ -123,10 +123,67 @@ class _CalendarSettingsScreenState extends ConsumerState<CalendarSettingsScreen>
     }
   }
 
+  Future<void> _toggleAutoSync(bool value) async {
+    try {
+      await ref.read(calendarActionsProvider).setAutoSync(value);
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              value 
+                ? 'Auto-sync enabled. Calendar will sync every 30 minutes.' 
+                : 'Auto-sync disabled',
+            ),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to toggle auto-sync: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
+  Future<void> _toggleTwoWaySync(bool value) async {
+    try {
+      await ref.read(calendarActionsProvider).setTwoWaySync(value);
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              value 
+                ? 'Two-way sync enabled. Changes in the app will sync to Google Calendar.' 
+                : 'Two-way sync disabled',
+            ),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to toggle two-way sync: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final user = ref.watch(currentUserProvider);
     final isGoogleConnected = ref.watch(isGoogleCalendarConnectedProvider);
+    final calendarPrefs = ref.watch(calendarPreferencesProvider);
 
     return Scaffold(
       appBar: AppBar(
@@ -152,7 +209,7 @@ class _CalendarSettingsScreenState extends ConsumerState<CalendarSettingsScreen>
                       children: [
                         Row(
                           children: [
-                            Icon(
+                            const Icon(
                               Icons.calendar_today,
                               color: AppTheme.primaryColor,
                               size: 32,
@@ -201,7 +258,6 @@ class _CalendarSettingsScreenState extends ConsumerState<CalendarSettingsScreen>
                                         icon: Icons.sync,
                                       ),
                                       const SizedBox(height: 8),
-                                      // FIXED: Use ElevatedButton instead of CustomButton with backgroundColor
                                       SizedBox(
                                         width: double.infinity,
                                         child: ElevatedButton.icon(
@@ -215,7 +271,7 @@ class _CalendarSettingsScreenState extends ConsumerState<CalendarSettingsScreen>
                                           label: const Text('Disconnect'),
                                         ),
                                       ),
-                                    ]
+                                    ],
                                   )
                                 : CustomButton(
                                     text: 'Connect Google Calendar',
@@ -261,6 +317,25 @@ class _CalendarSettingsScreenState extends ConsumerState<CalendarSettingsScreen>
                             'Active',
                             valueColor: Colors.green,
                           ),
+                          calendarPrefs.when(
+                            data: (prefs) {
+                              if (prefs.lastSyncTime != null) {
+                                return Column(
+                                  children: [
+                                    const Divider(height: 24),
+                                    _buildInfoRow(
+                                      context,
+                                      'Last Synced',
+                                      _formatLastSync(prefs.lastSyncTime!),
+                                    ),
+                                  ],
+                                );
+                              }
+                              return const SizedBox.shrink();
+                            },
+                            loading: () => const SizedBox.shrink(),
+                            error: (_, __) => const SizedBox.shrink(),
+                          ),
                         ],
                       ),
                     ),
@@ -278,36 +353,50 @@ class _CalendarSettingsScreenState extends ConsumerState<CalendarSettingsScreen>
                   Card(
                     child: Column(
                       children: [
-                        SwitchListTile(
-                          title: const Text('Auto-sync events'),
-                          subtitle: const Text(
-                            'Automatically sync new events with Google Calendar',
+                        calendarPrefs.when(
+                          data: (prefs) => SwitchListTile(
+                            title: const Text('Auto-sync events'),
+                            subtitle: const Text(
+                              'Automatically sync Google Calendar every 30 minutes',
+                            ),
+                            value: prefs.autoSyncEnabled,
+                            onChanged: _toggleAutoSync,
                           ),
-                          value: true, // This could be a user preference
-                          onChanged: (value) {
-                            // TODO: Implement auto-sync preference
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Feature coming soon!'),
-                              ),
-                            );
-                          },
+                          loading: () => const SwitchListTile(
+                            title: Text('Auto-sync events'),
+                            subtitle: Text('Loading...'),
+                            value: false,
+                            onChanged: null,
+                          ),
+                          error: (_, __) => const SwitchListTile(
+                            title: Text('Auto-sync events'),
+                            subtitle: Text('Error loading preferences'),
+                            value: false,
+                            onChanged: null,
+                          ),
                         ),
                         const Divider(height: 1),
-                        SwitchListTile(
-                          title: const Text('Two-way sync'),
-                          subtitle: const Text(
-                            'Sync changes from both Google Calendar and app',
+                        calendarPrefs.when(
+                          data: (prefs) => SwitchListTile(
+                            title: const Text('Two-way sync'),
+                            subtitle: const Text(
+                              'Sync changes from app to Google Calendar',
+                            ),
+                            value: prefs.twoWaySyncEnabled,
+                            onChanged: _toggleTwoWaySync,
                           ),
-                          value: false, // This could be a user preference
-                          onChanged: (value) {
-                            // TODO: Implement two-way sync preference
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(
-                                content: Text('Feature coming soon!'),
-                              ),
-                            );
-                          },
+                          loading: () => const SwitchListTile(
+                            title: Text('Two-way sync'),
+                            subtitle: Text('Loading...'),
+                            value: false,
+                            onChanged: null,
+                          ),
+                          error: (_, __) => const SwitchListTile(
+                            title: Text('Two-way sync'),
+                            subtitle: Text('Error loading preferences'),
+                            value: false,
+                            onChanged: null,
+                          ),
                         ),
                       ],
                     ),
@@ -341,13 +430,13 @@ class _CalendarSettingsScreenState extends ConsumerState<CalendarSettingsScreen>
                           '1. Connect your Google account to enable calendar sync',
                         ),
                         _buildHelpItem(
-                          '2. Events created in the app can be synced to Google Calendar',
+                          '2. Enable "Auto-sync" to automatically import Google Calendar events',
                         ),
                         _buildHelpItem(
-                          '3. Use "Sync Now" to manually sync your events',
+                          '3. Enable "Two-way sync" to push app events to Google Calendar',
                         ),
                         _buildHelpItem(
-                          '4. Your calendar stays up to date across all devices',
+                          '4. Use "Sync Now" to manually sync your events anytime',
                         ),
                       ],
                     ),
@@ -416,5 +505,20 @@ class _CalendarSettingsScreenState extends ConsumerState<CalendarSettingsScreen>
         ],
       ),
     );
+  }
+
+  String _formatLastSync(DateTime dateTime) {
+    final now = DateTime.now();
+    final difference = now.difference(dateTime);
+
+    if (difference.inMinutes < 1) {
+      return 'Just now';
+    } else if (difference.inMinutes < 60) {
+      return '${difference.inMinutes} min ago';
+    } else if (difference.inHours < 24) {
+      return '${difference.inHours} hr ago';
+    } else {
+      return '${difference.inDays} days ago';
+    }
   }
 }

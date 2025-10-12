@@ -4,6 +4,7 @@ import '../../../core/theme/app_theme.dart';
 import '../../providers/auth_provider.dart';
 import '../../providers/household_provider.dart';
 import '../auth/login_screen.dart';
+import '../calendar/calander_settings_screen.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({Key? key}) : super(key: key);
@@ -190,15 +191,19 @@ class SettingsScreen extends ConsumerWidget {
         ),
         ListTile(
           leading: const Icon(Icons.calendar_month),
-          title: const Text('Google Calendar'),
+          title: const Text('Calender Settings'),
           subtitle: const Text('Sync with Google Calendar'),
           trailing: const Icon(Icons.chevron_right),
           onTap: () {
-            // TODO: Google Calendar settings
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(
-                  content: Text('Google Calendar sync coming soon!')),
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (context) => const CalendarSettingsScreen(),
+              ),
             );
+            // ScaffoldMessenger.of(context).showSnackBar(
+            //   const SnackBar(
+            //       content: Text('Google Calendar sync coming soon!')),
+            // );
           },
         ),
         ListTile(

@@ -2,7 +2,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/repositories/calendar_repository.dart';
 import '../../data/datasources/google_calendar_datasource.dart';
 import '../../data/models/calendar_event_model.dart';
+import '../../data/models/calendar_preferences.dart';
 import '../../core/services/calendar_sync_service.dart';
+import '../../core/services/calendar_preferences_service.dart';
 import 'auth_provider.dart';
 
 // Calendar repository provider
@@ -22,7 +24,31 @@ final calendarSyncServiceProvider = Provider<CalendarSyncService>((ref) {
   return CalendarSyncService(googleCalendarDataSource, calendarRepository);
 });
 
-// Selected date provider (for calendar navigation) - FIXED
+// Calendar preferences service provider
+final calendarPreferencesServiceProvider = Provider<CalendarPreferencesService>((ref) {
+  final storage = ref.watch(secureStorageProvider);
+  return CalendarPreferencesService(storage);
+});
+
+// Calendar preferences provider
+final calendarPreferencesProvider = FutureProvider<CalendarPreferences>((ref) async {
+  final service = ref.watch(calendarPreferencesServiceProvider);
+  return await service.getPreferences();
+});
+
+// Auto-sync enabled state provider
+final autoSyncEnabledProvider = FutureProvider<bool>((ref) async {
+  final prefs = await ref.watch(calendarPreferencesProvider.future);
+  return prefs.autoSyncEnabled;
+});
+
+// Two-way sync enabled state provider
+final twoWaySyncEnabledProvider = FutureProvider<bool>((ref) async {
+  final prefs = await ref.watch(calendarPreferencesProvider.future);
+  return prefs.twoWaySyncEnabled;
+});
+
+// Selected date provider (for calendar navigation)
 final selectedDateProvider = Provider<DateTime>((ref) => DateTime.now());
 
 // Calendar events for selected month
@@ -84,18 +110,23 @@ class CalendarActions {
   CalendarActions(this.ref);
 
   /// Create event (optionally sync to Google Calendar)
-  Future<void> createEvent(
-    CalendarEventModel event, {
-    bool syncToGoogle = false,
-  }) async {
+  Future<void> createEvent(CalendarEventModel event, {bool? syncToGoogle}) async {
     try {
       final repository = ref.read(calendarRepositoryProvider);
       final syncService = ref.read(calendarSyncServiceProvider);
-
-      if (syncToGoogle) {
+      
+      // If syncToGoogle is null, check the two-way sync preference
+      bool shouldSync = syncToGoogle ?? false;
+      
+      if (syncToGoogle == null) {
+        final prefs = await ref.read(calendarPreferencesProvider.future);
+        shouldSync = prefs.twoWaySyncEnabled;
+      }
+      
+      if (shouldSync) {
         final user = ref.read(currentUserProvider).value;
         final googleCalendarId = user?.googleCalendarId;
-
+        
         if (googleCalendarId != null) {
           await syncService.createEventInBoth(
             event: event,
@@ -104,10 +135,11 @@ class CalendarActions {
           return;
         }
       }
-
+      
       // If not syncing to Google or no calendar ID, just create in Firestore
       await repository.createEvent(event);
     } catch (e) {
+      // ignore: avoid_print
       print('Error creating event: $e');
       rethrow;
     }
@@ -115,29 +147,35 @@ class CalendarActions {
 
   /// Update event (optionally sync to Google Calendar)
   Future<void> updateEvent(
-    String eventId,
-    Map<String, dynamic> updates, {
-    bool syncToGoogle = false,
-  }) async {
+    String eventId, 
+    Map<String, dynamic> updates,
+    {bool? syncToGoogle}
+  ) async {
     try {
       final repository = ref.read(calendarRepositoryProvider);
       final syncService = ref.read(calendarSyncServiceProvider);
-
-      if (syncToGoogle) {
+      
+      // If syncToGoogle is null, check the two-way sync preference
+      bool shouldSync = syncToGoogle ?? false;
+      
+      if (syncToGoogle == null) {
+        final prefs = await ref.read(calendarPreferencesProvider.future);
+        shouldSync = prefs.twoWaySyncEnabled;
+      }
+      
+      if (shouldSync) {
         final user = ref.read(currentUserProvider).value;
         final googleCalendarId = user?.googleCalendarId;
-
+        
         // Get the event to find its Google event ID
-        final events = await repository
-            .getEventsInRange(
-              user!.householdId!,
-              DateTime.now().subtract(const Duration(days: 365)),
-              DateTime.now().add(const Duration(days: 365)),
-            )
-            .first;
-
+        final events = await repository.getEventsInRange(
+          user!.householdId!,
+          DateTime.now().subtract(const Duration(days: 365)),
+          DateTime.now().add(const Duration(days: 365)),
+        ).first;
+        
         final event = events.firstWhere((e) => e.id == eventId);
-
+        
         if (googleCalendarId != null && event.googleEventId != null) {
           await syncService.updateEventInBoth(
             eventId: eventId,
@@ -148,9 +186,10 @@ class CalendarActions {
           return;
         }
       }
-
+      
       await repository.updateEvent(eventId, updates);
     } catch (e) {
+      // ignore: avoid_print
       print('Error updating event: $e');
       rethrow;
     }
@@ -158,28 +197,34 @@ class CalendarActions {
 
   /// Delete event (optionally sync to Google Calendar)
   Future<void> deleteEvent(
-    String eventId, {
-    bool syncToGoogle = false,
-  }) async {
+    String eventId,
+    {bool? syncToGoogle}
+  ) async {
     try {
       final repository = ref.read(calendarRepositoryProvider);
       final syncService = ref.read(calendarSyncServiceProvider);
-
-      if (syncToGoogle) {
+      
+      // If syncToGoogle is null, check the two-way sync preference
+      bool shouldSync = syncToGoogle ?? false;
+      
+      if (syncToGoogle == null) {
+        final prefs = await ref.read(calendarPreferencesProvider.future);
+        shouldSync = prefs.twoWaySyncEnabled;
+      }
+      
+      if (shouldSync) {
         final user = ref.read(currentUserProvider).value;
         final googleCalendarId = user?.googleCalendarId;
-
+        
         // Get the event to find its Google event ID
-        final events = await repository
-            .getEventsInRange(
-              user!.householdId!,
-              DateTime.now().subtract(const Duration(days: 365)),
-              DateTime.now().add(const Duration(days: 365)),
-            )
-            .first;
-
+        final events = await repository.getEventsInRange(
+          user!.householdId!,
+          DateTime.now().subtract(const Duration(days: 365)),
+          DateTime.now().add(const Duration(days: 365)),
+        ).first;
+        
         final event = events.firstWhere((e) => e.id == eventId);
-
+        
         if (googleCalendarId != null) {
           await syncService.deleteEventFromBoth(
             eventId: eventId,
@@ -189,9 +234,10 @@ class CalendarActions {
           return;
         }
       }
-
+      
       await repository.deleteEvent(eventId);
     } catch (e) {
+      // ignore: avoid_print
       print('Error deleting event: $e');
       rethrow;
     }
@@ -214,9 +260,18 @@ class CalendarActions {
         householdId,
         user!.googleCalendarId!,
       );
-
+      
+      // Update last sync time
+      final prefsService = ref.read(calendarPreferencesServiceProvider);
+      await prefsService.updateLastSyncTime();
+      
+      // Invalidate preferences to refresh UI
+      ref.invalidate(calendarPreferencesProvider);
+      
+      // ignore: avoid_print
       print('Google Calendar synced successfully');
     } catch (e) {
+      // ignore: avoid_print
       print('Error syncing Google Calendar: $e');
       rethrow;
     }
@@ -237,7 +292,7 @@ class CalendarActions {
       }
 
       final googleCalendarId = user?.googleCalendarId;
-
+      
       if (googleCalendarId != null) {
         return await syncService.checkAvailability(
           userId: userId,
@@ -251,6 +306,7 @@ class CalendarActions {
         return await repository.checkAvailability(userId, start, end);
       }
     } catch (e) {
+      // ignore: avoid_print
       print('Error checking availability: $e');
       return false;
     }
@@ -261,15 +317,76 @@ class CalendarActions {
     try {
       final authActions = ref.read(authActionsProvider);
       final accessToken = await authActions.refreshGoogleAccessToken();
-
+      
       if (accessToken != null) {
+        // ignore: avoid_print
         print('Google Calendar token refreshed');
       } else {
         throw Exception('Failed to refresh token');
       }
     } catch (e) {
+      // ignore: avoid_print
       print('Error refreshing token: $e');
       rethrow;
+    }
+  }
+
+  /// Toggle auto-sync
+  Future<void> setAutoSync(bool enabled) async {
+    try {
+      final service = ref.read(calendarPreferencesServiceProvider);
+      await service.setAutoSync(enabled);
+      
+      // Invalidate the preferences provider to refresh UI
+      ref.invalidate(calendarPreferencesProvider);
+      
+      // If enabling auto-sync, do an immediate sync
+      if (enabled) {
+        await syncGoogleCalendar();
+      }
+      
+      // ignore: avoid_print
+      print('Auto-sync ${enabled ? 'enabled' : 'disabled'}');
+    } catch (e) {
+      // ignore: avoid_print
+      print('Error setting auto-sync: $e');
+      rethrow;
+    }
+  }
+
+  /// Toggle two-way sync
+  Future<void> setTwoWaySync(bool enabled) async {
+    try {
+      final service = ref.read(calendarPreferencesServiceProvider);
+      await service.setTwoWaySync(enabled);
+      
+      // Invalidate the preferences provider to refresh UI
+      ref.invalidate(calendarPreferencesProvider);
+      
+      // ignore: avoid_print
+      print('Two-way sync ${enabled ? 'enabled' : 'disabled'}');
+    } catch (e) {
+      // ignore: avoid_print
+      print('Error setting two-way sync: $e');
+      rethrow;
+    }
+  }
+
+  /// Perform auto-sync if enabled and due
+  Future<void> autoSyncIfDue() async {
+    try {
+      final service = ref.read(calendarPreferencesServiceProvider);
+      final isDue = await service.isSyncDue();
+      
+      if (isDue) {
+        await syncGoogleCalendar();
+        // ignore: avoid_print
+        print('Auto-sync completed');
+      }
+    } catch (e) {
+      // ignore: avoid_print
+      print('Error in auto-sync: $e');
+      // Don't rethrow - auto-sync should fail silently
     }
   }
 }
