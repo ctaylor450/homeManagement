@@ -1,38 +1,35 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:google_sign_in/google_sign_in.dart';
-import 'package:googleapis/calendar/v3.dart' as gcal;
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 
 import '../../data/datasources/firebase_datasource.dart';
+import '../../data/datasources/google_calendar_datasource.dart';
 import '../../data/repositories/user_repository.dart';
 import '../../data/models/user_model.dart';
 
-/// -------------------------------
 /// Providers
-/// -------------------------------
-
-/// Firebase datasource provider
 final firebaseDataSourceProvider = Provider<FirebaseDataSource>((ref) {
   return FirebaseDataSource();
 });
 
-/// User repository provider
 final userRepositoryProvider = Provider<UserRepository>((ref) {
   return UserRepository();
 });
 
-/// GoogleSignIn provider (scopes can be extended later e.g. calendar)
 final googleSignInProvider = Provider<GoogleSignIn>((ref) {
   return GoogleSignIn.instance;
 });
 
-/// Auth state provider
+final secureStorageProvider = Provider<FlutterSecureStorage>((ref) {
+  return const FlutterSecureStorage();
+});
+
 final authStateProvider = StreamProvider<User?>((ref) {
   final dataSource = ref.watch(firebaseDataSourceProvider);
   return dataSource.authStateChanges;
 });
 
-/// Current user ID provider
 final currentUserIdProvider = Provider<String?>((ref) {
   final authState = ref.watch(authStateProvider);
   return authState.when(
@@ -42,7 +39,6 @@ final currentUserIdProvider = Provider<String?>((ref) {
   );
 });
 
-/// Current user data provider
 final currentUserProvider = StreamProvider<UserModel?>((ref) {
   final userId = ref.watch(currentUserIdProvider);
 
@@ -54,7 +50,6 @@ final currentUserProvider = StreamProvider<UserModel?>((ref) {
   return repository.getUserStream(userId);
 });
 
-/// Current household ID provider
 final currentHouseholdIdProvider = Provider<String?>((ref) {
   final user = ref.watch(currentUserProvider);
   return user.when(
@@ -64,14 +59,18 @@ final currentHouseholdIdProvider = Provider<String?>((ref) {
   );
 });
 
-/// Auth actions provider
 final authActionsProvider = Provider<AuthActions>((ref) {
   return AuthActions(ref);
 });
 
-/// -------------------------------
+// Provider to check if Google Calendar is connected
+final isGoogleCalendarConnectedProvider = FutureProvider<bool>((ref) async {
+  final storage = ref.watch(secureStorageProvider);
+  final accessToken = await storage.read(key: 'google_access_token');
+  return accessToken != null && accessToken.isNotEmpty;
+});
+
 /// AuthActions
-/// -------------------------------
 class AuthActions {
   final Ref ref;
 
@@ -87,11 +86,9 @@ class AuthActions {
       final dataSource = ref.read(firebaseDataSourceProvider);
       final userRepository = ref.read(userRepositoryProvider);
 
-      // Create auth user
       final userCredential = await dataSource.signUpWithEmail(email, password);
 
       if (userCredential.user != null) {
-        // Create user document in Firestore
         final user = UserModel(
           id: userCredential.user!.uid,
           name: name,
@@ -102,7 +99,6 @@ class AuthActions {
         await userRepository.createUser(user);
       }
     } catch (e) {
-      // ignore: avoid_print
       print('Error in sign up: $e');
       rethrow;
     }
@@ -117,65 +113,78 @@ class AuthActions {
       final dataSource = ref.read(firebaseDataSourceProvider);
       await dataSource.signInWithEmail(email, password);
     } catch (e) {
-      // ignore: avoid_print
       print('Error in sign in: $e');
       rethrow;
     }
   }
 
-  /// Google Sign-In (creates or signs in a Firebase user)
-  // auth_provider.dart (inside AuthActions)
-
+  /// Google Sign-In with Calendar Access
   Future<void> signInWithGoogle() async {
     try {
       final googleSignIn = ref.read(googleSignInProvider);
       final userRepository = ref.read(userRepositoryProvider);
+      final storage = ref.read(secureStorageProvider);
 
-      // 1) Pick account
+      // Authenticate with Google
       final account = await googleSignIn.authenticate();
       if (account == null) return;
 
-      // 2) Request Calendar (read/write) + basic profile/email scopes
+      // Request Calendar + basic profile/email scopes
       const scopes = <String>[
         'https://www.googleapis.com/auth/calendar',
         'https://www.googleapis.com/auth/userinfo.email',
         'https://www.googleapis.com/auth/userinfo.profile',
       ];
 
-      // Use authorizeScopes so the result is non-null (will prompt if needed)
       final authorization =
           await account.authorizationClient.authorizeScopes(scopes);
       final String accessToken = authorization.accessToken;
 
-      // 3) Get ID token for Firebase
+      // Store access token securely
+      await storage.write(key: 'google_access_token', value: accessToken);
+      
+      // Get refresh token if available (for long-term access)
       final auth = await account.authentication;
+      if (auth.idToken != null) {
+        await storage.write(key: 'google_refresh_token', value: auth.idToken!);
+      }
 
-      // 4) Create Firebase credential (idToken is what Firebase needs)
+      // Create Firebase credential
       final credential = GoogleAuthProvider.credential(
         idToken: auth.idToken,
-        // optional: pass the access token; Firebase will safely ignore it
         accessToken: accessToken,
       );
 
-      // 5) Sign in to Firebase
-      final userCred =
-          await FirebaseAuth.instance.signInWithCredential(credential);
+      // Sign in to Firebase
+      final userCred = await FirebaseAuth.instance.signInWithCredential(credential);
 
-      // 6) Upsert Firestore profile
+      // Initialize Google Calendar API
+      final calendarDataSource = ref.read(googleCalendarDataSourceProvider);
+      await calendarDataSource.initialize(accessToken);
+
+      // Get primary calendar ID
+      final calendarId = await calendarDataSource.getPrimaryCalendarId();
+
+      // Upsert Firestore profile with calendar ID
       final fbUser = userCred.user;
       if (fbUser != null) {
         final profile = UserModel(
           id: fbUser.uid,
           name: fbUser.displayName ?? account.displayName ?? '',
           email: fbUser.email ?? account.email,
+          googleCalendarId: calendarId,
           createdAt: DateTime.now(),
         );
-        try { await userRepository.createUser(profile); } catch (_) {}
+        
+        try {
+          await userRepository.createUser(profile);
+        } catch (_) {
+          // User already exists, update with calendar ID
+          await userRepository.updateUser(fbUser.uid, {
+            'googleCalendarId': calendarId,
+          });
+        }
       }
-
-      // 7) Persist accessToken securely if you’ll call Calendar later
-      // final storage = const FlutterSecureStorage();
-      // await storage.write(key: 'google_access_token', value: accessToken);
     } on FirebaseAuthException catch (e) {
       print('FirebaseAuthException in signInWithGoogle: ${e.code} ${e.message}');
       rethrow;
@@ -185,143 +194,136 @@ class AuthActions {
     }
   }
 
-
-
-  /// Link Google provider to the currently signed-in Firebase user (account linking)
-  Future<void> linkGoogleToCurrentUser() async {
+  /// Link Google Calendar to existing account
+  Future<void> linkGoogleCalendar() async {
     try {
       final current = FirebaseAuth.instance.currentUser;
       if (current == null) {
-        throw FirebaseAuthException(
-          code: 'no-current-user',
-          message: 'No user is currently signed in.',
-        );
+        throw Exception('No user is currently signed in');
       }
 
       final googleSignIn = ref.read(googleSignInProvider);
+      final userRepository = ref.read(userRepositoryProvider);
+      final storage = ref.read(secureStorageProvider);
+
+      // Authenticate with Google
       final account = await googleSignIn.authenticate();
       if (account == null) return;
 
-      // Get ID token for linking
-      final auth = await account.authentication;
-      final credential = GoogleAuthProvider.credential(
-        idToken: auth.idToken, // ✅ no accessToken on v7 auth object
-      );
-      await current.linkWithCredential(credential);
-
-      // (Optional) Immediately request calendar access token too
+      // Request Calendar scopes
       const scopes = <String>[
         'https://www.googleapis.com/auth/calendar',
         'https://www.googleapis.com/auth/userinfo.email',
         'https://www.googleapis.com/auth/userinfo.profile',
       ];
+
       final authorization =
           await account.authorizationClient.authorizeScopes(scopes);
       final String accessToken = authorization.accessToken;
-      // Save accessToken if needed.
 
-      await syncProfileFromAuth();
-    } on FirebaseAuthException catch (e) {
-      print('FirebaseAuthException in linkGoogleToCurrentUser: ${e.code} ${e.message}');
-      rethrow;
-    } catch (e) {
-      print('Error in linkGoogleToCurrentUser: $e');
-      rethrow;
-    }
-  }
+      // Store access token
+      await storage.write(key: 'google_access_token', value: accessToken);
 
+      // Initialize Google Calendar API
+      final calendarDataSource = ref.read(googleCalendarDataSourceProvider);
+      await calendarDataSource.initialize(accessToken);
 
-  /// Unlink Google provider (disconnect Google from this Firebase account)
-  Future<void> unlinkGoogle() async {
-    try {
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) return;
+      // Get primary calendar ID
+      final calendarId = await calendarDataSource.getPrimaryCalendarId();
 
-      await user.unlink('google.com');
-
-      // Optional: also disconnect local GoogleSignIn client on device
-      final googleSignIn = ref.read(googleSignInProvider);
-      try {
-        await googleSignIn.disconnect();
-      } catch (_) {
-        // ignore disconnect errors
+      // Update user with calendar ID
+      if (calendarId != null) {
+        await userRepository.updateGoogleCalendarId(current.uid, calendarId);
       }
 
-      // Optionally resync Firestore profile
-      await syncProfileFromAuth();
-    } on FirebaseAuthException catch (e) {
-      // ignore: avoid_print
-      print('FirebaseAuthException in unlinkGoogle: ${e.code} ${e.message}');
-      rethrow;
+      print('Google Calendar linked successfully');
     } catch (e) {
-      // ignore: avoid_print
-      print('Error in unlinkGoogle: $e');
+      print('Error linking Google Calendar: $e');
       rethrow;
     }
   }
 
-  /// Refresh Firestore profile fields from FirebaseAuth (name/email/photo, etc.)
-  Future<void> syncProfileFromAuth() async {
+  /// Disconnect Google Calendar
+  Future<void> disconnectGoogleCalendar() async {
     try {
+      final current = FirebaseAuth.instance.currentUser;
+      if (current == null) return;
+
+      final storage = ref.read(secureStorageProvider);
       final userRepository = ref.read(userRepositoryProvider);
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) return;
+      final calendarDataSource = ref.read(googleCalendarDataSourceProvider);
 
-      await user.reload();
-      final refreshed = FirebaseAuth.instance.currentUser;
+      // Sign out from Google Calendar
+      await calendarDataSource.signOut();
 
-      if (refreshed != null) {
-        final updated = UserModel(
-          id: refreshed.uid,
-          name: refreshed.displayName ?? '',
-          email: refreshed.email ?? '',
-          createdAt: DateTime.now(), // repo can choose to ignore/merge this
-        );
+      // Remove stored tokens
+      await storage.delete(key: 'google_access_token');
+      await storage.delete(key: 'google_refresh_token');
 
-        // If your repo supports a dedicated update, prefer that.
-        try {
-          await userRepository.createUser(updated);
-        } catch (_) {
-          // If create fails because doc exists, you may add an update path in your repo.
-          // For now we ignore errors to avoid breaking the flow.
-        }
-      }
+      // Update user record
+      await userRepository.updateUser(current.uid, {
+        'googleCalendarId': null,
+      });
+
+      print('Google Calendar disconnected');
     } catch (e) {
-      // ignore: avoid_print
-      print('Error in syncProfileFromAuth: $e');
+      print('Error disconnecting Google Calendar: $e');
       rethrow;
     }
   }
 
-  /// Sign out (Firebase + local Google session)
+  /// Refresh Google Calendar access token
+  Future<String?> refreshGoogleAccessToken() async {
+    try {
+      final googleSignIn = ref.read(googleSignInProvider);
+      final storage = ref.read(secureStorageProvider);
+
+      final account = googleSignIn.currentUser;
+      if (account == null) return null;
+
+      const scopes = <String>[
+        'https://www.googleapis.com/auth/calendar',
+      ];
+
+      final authorization =
+          await account.authorizationClient.authorizeScopes(scopes);
+      final String accessToken = authorization.accessToken;
+
+      await storage.write(key: 'google_access_token', value: accessToken);
+
+      // Re-initialize calendar API
+      final calendarDataSource = ref.read(googleCalendarDataSourceProvider);
+      await calendarDataSource.initialize(accessToken);
+
+      return accessToken;
+    } catch (e) {
+      print('Error refreshing access token: $e');
+      return null;
+    }
+  }
+
+  /// Sign Out
   Future<void> signOut() async {
     try {
       final dataSource = ref.read(firebaseDataSourceProvider);
+      final googleSignIn = ref.read(googleSignInProvider);
+      final storage = ref.read(secureStorageProvider);
+      final calendarDataSource = ref.read(googleCalendarDataSourceProvider);
+
+      // Sign out from Google Calendar
+      await calendarDataSource.signOut();
+      
+      // Clear stored tokens
+      await storage.delete(key: 'google_access_token');
+      await storage.delete(key: 'google_refresh_token');
+
+      // Sign out from Google
+      await googleSignIn.signOut();
+
       // Sign out from Firebase
       await dataSource.signOut();
-
-      // Also sign out of the local GoogleSignIn client so the chooser shows next time
-      final googleSignIn = ref.read(googleSignInProvider);
-      try {
-        await googleSignIn.signOut();
-      } catch (_) {
-        // ignore signOut errors
-      }
     } catch (e) {
-      // ignore: avoid_print
-      print('Error in sign out: $e');
-      rethrow;
-    }
-  }
-
-  /// Password reset
-  Future<void> resetPassword(String email) async {
-    try {
-      final dataSource = ref.read(firebaseDataSourceProvider);
-      await dataSource.resetPassword(email);
-    } catch (e) {
-      // ignore: avoid_print
-      print('Error resetting password: $e');
+      print('Error signing out: $e');
       rethrow;
     }
   }
