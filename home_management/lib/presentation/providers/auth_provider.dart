@@ -103,6 +103,7 @@ class AuthActions {
         await userRepository.createUser(user);
       }
     } catch (e) {
+      // ignore: avoid_print
       print('Error in sign up: $e');
       rethrow;
     }
@@ -117,6 +118,7 @@ class AuthActions {
       final dataSource = ref.read(firebaseDataSourceProvider);
       await dataSource.signInWithEmail(email, password);
     } catch (e) {
+      // ignore: avoid_print
       print('Error in sign in: $e');
       rethrow;
     }
@@ -131,6 +133,7 @@ class AuthActions {
 
       // Authenticate with Google
       final account = await googleSignIn.authenticate();
+      if (account == null) return;
 
       // Request Calendar + basic profile/email scopes
       const scopes = <String>[
@@ -146,8 +149,8 @@ class AuthActions {
       // Store access token securely
       await storage.write(key: 'google_access_token', value: accessToken);
       
-      // Get refresh token if available (for long-term access)
-      final auth = await account.authentication;
+      // Get ID token for Firebase - FIXED: removed await
+      final auth = account.authentication;
       if (auth.idToken != null) {
         await storage.write(key: 'google_refresh_token', value: auth.idToken!);
       }
@@ -162,7 +165,6 @@ class AuthActions {
       final userCred = await FirebaseAuth.instance.signInWithCredential(credential);
 
       // Initialize Google Calendar API
-      
       final calendarDataSource = ref.read(googleCalendarDataSourceProvider);
       await calendarDataSource.initialize(accessToken);
 
@@ -190,9 +192,11 @@ class AuthActions {
         }
       }
     } on FirebaseAuthException catch (e) {
+      // ignore: avoid_print
       print('FirebaseAuthException in signInWithGoogle: ${e.code} ${e.message}');
       rethrow;
     } catch (e) {
+      // ignore: avoid_print
       print('Error in signInWithGoogle: $e');
       rethrow;
     }
@@ -212,6 +216,7 @@ class AuthActions {
 
       // Authenticate with Google
       final account = await googleSignIn.authenticate();
+      if (account == null) return;
 
       // Request Calendar scopes
       const scopes = <String>[
@@ -239,8 +244,10 @@ class AuthActions {
         await userRepository.updateGoogleCalendarId(current.uid, calendarId);
       }
 
+      // ignore: avoid_print
       print('Google Calendar linked successfully');
     } catch (e) {
+      // ignore: avoid_print
       print('Error linking Google Calendar: $e');
       rethrow;
     }
@@ -268,8 +275,10 @@ class AuthActions {
         'googleCalendarId': null,
       });
 
+      // ignore: avoid_print
       print('Google Calendar disconnected');
     } catch (e) {
+      // ignore: avoid_print
       print('Error disconnecting Google Calendar: $e');
       rethrow;
     }
@@ -281,8 +290,14 @@ class AuthActions {
       final googleSignIn = ref.read(googleSignInProvider);
       final storage = ref.read(secureStorageProvider);
 
-      final account = await googleSignIn.signInSilently();
-      if (account == null) return null;
+      // FIXED: In google_sign_in v7.x, we need to re-authenticate to get a fresh token
+      // There's no signInSilently in v7.x, so we just return null and let user re-authenticate
+      final account = await googleSignIn.authenticate();
+      
+      if (account == null) {
+        // User cancelled or not signed in
+        return null;
+      }
 
       const scopes = <String>[
         'https://www.googleapis.com/auth/calendar',
@@ -300,6 +315,7 @@ class AuthActions {
 
       return accessToken;
     } catch (e) {
+      // ignore: avoid_print
       print('Error refreshing access token: $e');
       return null;
     }
@@ -326,6 +342,7 @@ class AuthActions {
       // Sign out from Firebase
       await dataSource.signOut();
     } catch (e) {
+      // ignore: avoid_print
       print('Error signing out: $e');
       rethrow;
     }

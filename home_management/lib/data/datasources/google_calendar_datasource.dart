@@ -11,7 +11,7 @@ class GoogleCalendarDataSource {
   Future<void> initialize(String accessToken) async {
     try {
       final credentials = AccessCredentials(
-        AccessToken('Bearer', accessToken, DateTime.now().add(Duration(hours: 1))),
+        AccessToken('Bearer', accessToken, DateTime.now().toUtc().add(Duration(hours: 1))),
         null,
         ['https://www.googleapis.com/auth/calendar'],
       );

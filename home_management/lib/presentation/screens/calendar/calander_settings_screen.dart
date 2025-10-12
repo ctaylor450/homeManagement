@@ -201,13 +201,21 @@ class _CalendarSettingsScreenState extends ConsumerState<CalendarSettingsScreen>
                                         icon: Icons.sync,
                                       ),
                                       const SizedBox(height: 8),
-                                      CustomButton(
-                                        text: 'Disconnect',
-                                        onPressed: _handleGoogleCalendarDisconnect,
-                                        backgroundColor: Colors.red,
-                                        icon: Icons.link_off,
+                                      // FIXED: Use ElevatedButton instead of CustomButton with backgroundColor
+                                      SizedBox(
+                                        width: double.infinity,
+                                        child: ElevatedButton.icon(
+                                          onPressed: _handleGoogleCalendarDisconnect,
+                                          style: ElevatedButton.styleFrom(
+                                            backgroundColor: Colors.red,
+                                            foregroundColor: Colors.white,
+                                            padding: const EdgeInsets.symmetric(vertical: 16),
+                                          ),
+                                          icon: const Icon(Icons.link_off),
+                                          label: const Text('Disconnect'),
+                                        ),
                                       ),
-                                    ],
+                                    ]
                                   )
                                 : CustomButton(
                                     text: 'Connect Google Calendar',
