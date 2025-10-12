@@ -25,6 +25,10 @@ final secureStorageProvider = Provider<FlutterSecureStorage>((ref) {
   return const FlutterSecureStorage();
 });
 
+final googleCalendarDataSourceProvider = Provider<GoogleCalendarDataSource>((ref) {
+  return GoogleCalendarDataSource();
+});
+
 final authStateProvider = StreamProvider<User?>((ref) {
   final dataSource = ref.watch(firebaseDataSourceProvider);
   return dataSource.authStateChanges;
@@ -127,7 +131,6 @@ class AuthActions {
 
       // Authenticate with Google
       final account = await googleSignIn.authenticate();
-      if (account == null) return;
 
       // Request Calendar + basic profile/email scopes
       const scopes = <String>[
@@ -159,6 +162,7 @@ class AuthActions {
       final userCred = await FirebaseAuth.instance.signInWithCredential(credential);
 
       // Initialize Google Calendar API
+      
       final calendarDataSource = ref.read(googleCalendarDataSourceProvider);
       await calendarDataSource.initialize(accessToken);
 
@@ -208,7 +212,6 @@ class AuthActions {
 
       // Authenticate with Google
       final account = await googleSignIn.authenticate();
-      if (account == null) return;
 
       // Request Calendar scopes
       const scopes = <String>[
@@ -278,7 +281,7 @@ class AuthActions {
       final googleSignIn = ref.read(googleSignInProvider);
       final storage = ref.read(secureStorageProvider);
 
-      final account = googleSignIn.currentUser;
+      final account = await googleSignIn.signInSilently();
       if (account == null) return null;
 
       const scopes = <String>[
