@@ -4,9 +4,10 @@ import 'package:table_calendar/table_calendar.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../providers/calendar_provider.dart';
 import '../../widgets/loading_widget.dart';
+import '../../widgets/create_event_dialog.dart';
 
 class SharedCalendarScreen extends ConsumerStatefulWidget {
-  const SharedCalendarScreen({Key? key}) : super(key: key);
+  const SharedCalendarScreen({super.key});
 
   @override
   ConsumerState<SharedCalendarScreen> createState() =>
@@ -80,9 +81,13 @@ class _SharedCalendarScreenState extends ConsumerState<SharedCalendarScreen> {
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () {
-          // TODO: Implement create event
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Create event coming soon!')),
+          // Show create event dialog
+          showDialog(
+            context: context,
+            builder: (context) => CreateEventDialog(
+              selectedDate: _selectedDay ?? _focusedDay,
+              isSharedCalendar: true, // Default to shared for shared calendar screen
+            ),
           );
         },
         child: const Icon(Icons.add),
@@ -138,12 +143,37 @@ class _SharedCalendarScreenState extends ConsumerState<SharedCalendarScreen> {
                   color: AppTheme.primaryColor,
                 ),
                 title: Text(event.title),
-                subtitle: Text(
-                  '${_formatTime(event.startTime)} - ${_formatTime(event.endTime)}',
+                subtitle: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${_formatTime(event.startTime)} - ${_formatTime(event.endTime)}',
+                    ),
+                    if (event.description != null && event.description!.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
+                        child: Text(
+                          event.description!,
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey[600],
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                  ],
                 ),
                 trailing: event.isShared
-                    ? const Icon(Icons.group, size: 20)
+                    ? const Tooltip(
+                        message: 'Shared with household',
+                        child: Icon(Icons.group, size: 20),
+                      )
                     : null,
+                onTap: () {
+                  // TODO: Show event details dialog
+                  _showEventDetails(event);
+                },
               ),
             );
           },
@@ -151,6 +181,60 @@ class _SharedCalendarScreenState extends ConsumerState<SharedCalendarScreen> {
       },
       loading: () => const LoadingWidget(),
       error: (error, _) => Center(child: Text('Error: $error')),
+    );
+  }
+
+  void _showEventDetails(event) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(event.title),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            if (event.description != null && event.description!.isNotEmpty) ...[
+              Text(event.description!),
+              const SizedBox(height: 16),
+            ],
+            Row(
+              children: [
+                const Icon(Icons.access_time, size: 16),
+                const SizedBox(width: 8),
+                Text(
+                  '${_formatTime(event.startTime)} - ${_formatTime(event.endTime)}',
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                const Icon(Icons.calendar_today, size: 16),
+                const SizedBox(width: 8),
+                Text(
+                  '${event.startTime.day}/${event.startTime.month}/${event.startTime.year}',
+                ),
+              ],
+            ),
+            if (event.isShared) ...[
+              const SizedBox(height: 8),
+              const Row(
+                children: [
+                  Icon(Icons.group, size: 16),
+                  SizedBox(width: 8),
+                  Text('Shared with household'),
+                ],
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('Close'),
+          ),
+        ],
+      ),
     );
   }
 
