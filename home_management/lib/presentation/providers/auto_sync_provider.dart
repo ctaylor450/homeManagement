@@ -82,14 +82,18 @@ class SharedCalendarAutoSync {
 }
 
 /// Provider to get the shared calendar sync status
-final sharedCalendarSyncStatusProvider = StreamProvider<String>((ref) async* {
+final sharedCalendarSyncStatusProvider = Provider<String>((ref) {
   final household = ref.watch(currentHouseholdProvider);
   
-  await for (final householdData in household.stream) {
-    if (householdData?.sharedGoogleCalendarId == null) {
-      yield 'No shared calendar linked';
-    } else {
-      yield 'Syncing with: ${householdData!.sharedGoogleCalendarId}';
-    }
-  }
+  return household.when(
+    data: (householdData) {
+      if (householdData?.sharedGoogleCalendarId == null) {
+        return 'No shared calendar linked';
+      } else {
+        return 'Syncing with: ${householdData!.sharedGoogleCalendarId}';
+      }
+    },
+    loading: () => 'Loading...',
+    error: (_, __) => 'Error loading sync status',
+  );
 });

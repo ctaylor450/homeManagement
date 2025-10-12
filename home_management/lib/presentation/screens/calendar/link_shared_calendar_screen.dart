@@ -1,14 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:googleapis/calendar/v3.dart';
-import '../../../data/datasources/google_calendar_datasource.dart';
+import 'package:googleapis/calendar/v3.dart' as gcal;
 import '../../../data/repositories/household_repository.dart';
-import '../../providers/auth_provider.dart';
+import '../../providers/auth_provider.dart' hide googleCalendarDataSourceProvider;
 import '../../providers/household_provider.dart';
 import '../../providers/calendar_provider.dart';
 
 class LinkSharedCalendarScreen extends ConsumerStatefulWidget {
-  const LinkSharedCalendarScreen({Key? key}) : super(key: key);
+  const LinkSharedCalendarScreen({super.key});
 
   @override
   ConsumerState<LinkSharedCalendarScreen> createState() =>
@@ -18,7 +17,7 @@ class LinkSharedCalendarScreen extends ConsumerStatefulWidget {
 class _LinkSharedCalendarScreenState
     extends ConsumerState<LinkSharedCalendarScreen> {
   bool _isLoading = true;
-  List<CalendarListEntry> _calendars = [];
+  List<gcal.CalendarListEntry> _calendars = [];
   String? _selectedCalendarId;
   String? _error;
 
@@ -213,11 +212,11 @@ class _LinkSharedCalendarScreenState
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  const Row(
+                  Row(
                     children: [
-                      Icon(Icons.info_outline, color: Colors.blue),
-                      SizedBox(width: 8),
-                      Text(
+                      Icon(Icons.info_outline, color: Colors.blue[700]),
+                      const SizedBox(width: 8),
+                      const Text(
                         'About Shared Calendars',
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
@@ -282,14 +281,14 @@ class _LinkSharedCalendarScreenState
                           vertical: 4,
                         ),
                         decoration: BoxDecoration(
-                          color: Colors.blue.shade100,
+                          color: Colors.blue[100],
                           borderRadius: BorderRadius.circular(12),
                         ),
-                        child: const Text(
+                        child: Text(
                           'Primary',
                           style: TextStyle(
                             fontSize: 12,
-                            color: Colors.blue,
+                            color: Colors.blue[900],
                           ),
                         ),
                       ),

@@ -127,7 +127,7 @@ class CalendarSyncService {
             isShared: true, // Mark as shared so everyone can see it
             googleEventId: event.id,
             type: EventType.event,
-            location: event.location,
+            //location: event.location,
           );
 
           await _calendarRepository.createEvent(calendarEvent);
