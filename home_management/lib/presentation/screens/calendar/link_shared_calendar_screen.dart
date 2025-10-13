@@ -2,9 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:googleapis/calendar/v3.dart' as gcal;
 import '../../../data/repositories/household_repository.dart';
-import '../../providers/auth_provider.dart' hide googleCalendarDataSourceProvider;
+import '../../providers/auth_provider.dart';
 import '../../providers/household_provider.dart';
-import '../../providers/calendar_provider.dart';
+import '../../providers/calendar_provider.dart' hide googleCalendarDataSourceProvider;
 
 class LinkSharedCalendarScreen extends ConsumerStatefulWidget {
   const LinkSharedCalendarScreen({super.key});
