@@ -1,3 +1,6 @@
+// lib/presentation/providers/calendar_provider.dart
+// COMPLETE FILE WITH BI-DIRECTIONAL SYNC FIXES
+
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/repositories/calendar_repository.dart';
 import '../../data/datasources/google_calendar_datasource.dart';
@@ -6,6 +9,11 @@ import '../../data/models/calendar_preferences.dart';
 import '../../core/services/calendar_sync_service.dart';
 import '../../core/services/calendar_preferences_service.dart';
 import 'auth_provider.dart';
+import 'household_provider.dart';
+
+// ============================================================================
+// PROVIDERS
+// ============================================================================
 
 // Calendar repository provider
 final calendarRepositoryProvider = Provider<CalendarRepository>((ref) {
@@ -104,18 +112,22 @@ final calendarActionsProvider = Provider<CalendarActions>((ref) {
   return CalendarActions(ref);
 });
 
+// ============================================================================
+// CALENDAR ACTIONS CLASS (FIXED)
+// ============================================================================
+
 class CalendarActions {
   final Ref ref;
 
   CalendarActions(this.ref);
 
-  /// Create event (optionally sync to Google Calendar)
+  /// Create event (with proper shared calendar support) - FIXED
   Future<void> createEvent(CalendarEventModel event, {bool? syncToGoogle}) async {
     try {
       final repository = ref.read(calendarRepositoryProvider);
       final syncService = ref.read(calendarSyncServiceProvider);
       
-      // If syncToGoogle is null, check the two-way sync preference
+      // Determine if we should sync to Google
       bool shouldSync = syncToGoogle ?? false;
       
       if (syncToGoogle == null) {
@@ -124,19 +136,36 @@ class CalendarActions {
       }
       
       if (shouldSync) {
-        final user = ref.read(currentUserProvider).value;
-        final googleCalendarId = user?.googleCalendarId;
-        
-        if (googleCalendarId != null) {
-          await syncService.createEventInBoth(
-            event: event,
-            googleCalendarId: googleCalendarId,
-          );
-          return;
+        // FIXED: Check if this is a SHARED event
+        if (event.isShared) {
+          // Use household's shared calendar
+          final household = ref.read(currentHouseholdProvider).value;
+          final sharedCalendarId = household?.sharedGoogleCalendarId;
+          
+          if (sharedCalendarId != null) {
+            // FIXED: Use new method for shared events
+            await syncService.createSharedEventInBoth(
+              event: event,
+              sharedGoogleCalendarId: sharedCalendarId,
+            );
+            return;
+          }
+        } else {
+          // Use user's personal calendar
+          final user = ref.read(currentUserProvider).value;
+          final googleCalendarId = user?.googleCalendarId;
+          
+          if (googleCalendarId != null) {
+            await syncService.createEventInBoth(
+              event: event,
+              googleCalendarId: googleCalendarId,
+            );
+            return;
+          }
         }
       }
       
-      // If not syncing to Google or no calendar ID, just create in Firestore
+      // If not syncing to Google, just create in Firestore
       await repository.createEvent(event);
     } catch (e) {
       // ignore: avoid_print
@@ -145,7 +174,7 @@ class CalendarActions {
     }
   }
 
-  /// Update event (optionally sync to Google Calendar)
+  /// Update event (with proper shared calendar support) - FIXED
   Future<void> updateEvent(
     String eventId, 
     Map<String, dynamic> updates,
@@ -155,7 +184,7 @@ class CalendarActions {
       final repository = ref.read(calendarRepositoryProvider);
       final syncService = ref.read(calendarSyncServiceProvider);
       
-      // If syncToGoogle is null, check the two-way sync preference
+      // Determine if we should sync to Google
       bool shouldSync = syncToGoogle ?? false;
       
       if (syncToGoogle == null) {
@@ -164,26 +193,47 @@ class CalendarActions {
       }
       
       if (shouldSync) {
-        final user = ref.read(currentUserProvider).value;
-        final googleCalendarId = user?.googleCalendarId;
-        
-        // Get the event to find its Google event ID
+        // Get the event to check if it's shared and has a Google event ID
+        final householdId = ref.read(currentHouseholdIdProvider);
         final events = await repository.getEventsInRange(
-          user!.householdId!,
+          householdId!,
           DateTime.now().subtract(const Duration(days: 365)),
           DateTime.now().add(const Duration(days: 365)),
         ).first;
         
         final event = events.firstWhere((e) => e.id == eventId);
         
-        if (googleCalendarId != null && event.googleEventId != null) {
-          await syncService.updateEventInBoth(
-            eventId: eventId,
-            googleCalendarId: googleCalendarId,
-            googleEventId: event.googleEventId!,
-            updates: updates,
-          );
-          return;
+        if (event.googleEventId != null) {
+          // FIXED: Check if event is shared and use correct calendar
+          if (event.isShared) {
+            // Update in shared calendar
+            final household = ref.read(currentHouseholdProvider).value;
+            final sharedCalendarId = household?.sharedGoogleCalendarId;
+            
+            if (sharedCalendarId != null) {
+              await syncService.updateSharedEventInBoth(
+                eventId: eventId,
+                sharedGoogleCalendarId: sharedCalendarId,
+                googleEventId: event.googleEventId!,
+                updates: updates,
+              );
+              return;
+            }
+          } else {
+            // Update in personal calendar
+            final user = ref.read(currentUserProvider).value;
+            final googleCalendarId = user?.googleCalendarId;
+            
+            if (googleCalendarId != null) {
+              await syncService.updateEventInBoth(
+                eventId: eventId,
+                googleCalendarId: googleCalendarId,
+                googleEventId: event.googleEventId!,
+                updates: updates,
+              );
+              return;
+            }
+          }
         }
       }
       
@@ -195,7 +245,7 @@ class CalendarActions {
     }
   }
 
-  /// Delete event (optionally sync to Google Calendar)
+  /// Delete event (with proper shared calendar support) - FIXED
   Future<void> deleteEvent(
     String eventId,
     {bool? syncToGoogle}
@@ -204,7 +254,7 @@ class CalendarActions {
       final repository = ref.read(calendarRepositoryProvider);
       final syncService = ref.read(calendarSyncServiceProvider);
       
-      // If syncToGoogle is null, check the two-way sync preference
+      // Determine if we should sync to Google
       bool shouldSync = syncToGoogle ?? false;
       
       if (syncToGoogle == null) {
@@ -213,25 +263,43 @@ class CalendarActions {
       }
       
       if (shouldSync) {
-        final user = ref.read(currentUserProvider).value;
-        final googleCalendarId = user?.googleCalendarId;
-        
-        // Get the event to find its Google event ID
+        // Get the event to check if it's shared
+        final householdId = ref.read(currentHouseholdIdProvider);
         final events = await repository.getEventsInRange(
-          user!.householdId!,
+          householdId!,
           DateTime.now().subtract(const Duration(days: 365)),
           DateTime.now().add(const Duration(days: 365)),
         ).first;
         
         final event = events.firstWhere((e) => e.id == eventId);
         
-        if (googleCalendarId != null) {
-          await syncService.deleteEventFromBoth(
-            eventId: eventId,
-            googleCalendarId: googleCalendarId,
-            googleEventId: event.googleEventId,
-          );
-          return;
+        // FIXED: Check if event is shared and use correct calendar
+        if (event.isShared) {
+          // Delete from shared calendar
+          final household = ref.read(currentHouseholdProvider).value;
+          final sharedCalendarId = household?.sharedGoogleCalendarId;
+          
+          if (sharedCalendarId != null) {
+            await syncService.deleteSharedEventFromBoth(
+              eventId: eventId,
+              sharedGoogleCalendarId: sharedCalendarId,
+              googleEventId: event.googleEventId,
+            );
+            return;
+          }
+        } else {
+          // Delete from personal calendar
+          final user = ref.read(currentUserProvider).value;
+          final googleCalendarId = user?.googleCalendarId;
+          
+          if (googleCalendarId != null) {
+            await syncService.deleteEventFromBoth(
+              eventId: eventId,
+              googleCalendarId: googleCalendarId,
+              googleEventId: event.googleEventId,
+            );
+            return;
+          }
         }
       }
       
@@ -243,24 +311,36 @@ class CalendarActions {
     }
   }
 
-  /// Sync all Google Calendar events to Firestore
+  /// Sync all Google Calendar events to Firestore - ENHANCED
   Future<void> syncGoogleCalendar() async {
     try {
       final syncService = ref.read(calendarSyncServiceProvider);
       final userId = ref.read(currentUserIdProvider);
       final householdId = ref.read(currentHouseholdIdProvider);
       final user = ref.read(currentUserProvider).value;
+      final household = ref.read(currentHouseholdProvider).value;
 
-      if (userId == null || householdId == null || user?.googleCalendarId == null) {
-        throw Exception('Missing required data for sync');
+      if (userId == null || householdId == null) {
+        throw Exception('User or household not found');
       }
 
-      await syncService.syncGoogleCalendar(
-        userId,
-        householdId,
-        user!.googleCalendarId!,
-      );
-      
+      // Sync personal calendar
+      if (user?.googleCalendarId != null) {
+        await syncService.syncGoogleCalendar(
+          userId,
+          householdId,
+          user!.googleCalendarId!,
+        );
+      }
+
+      // ADDED: Sync shared calendar (bi-directional)
+      if (household?.sharedGoogleCalendarId != null) {
+        await syncService.syncSharedGoogleCalendar(
+          householdId,
+          household!.sharedGoogleCalendarId!,
+        );
+      }
+
       // Update last sync time
       final prefsService = ref.read(calendarPreferencesServiceProvider);
       await prefsService.updateLastSyncTime();
