@@ -20,10 +20,9 @@ final calendarRepositoryProvider = Provider<CalendarRepository>((ref) {
   return CalendarRepository();
 });
 
-// Google Calendar datasource provider
+// Google Calendar datasource provider - returns singleton instance
 final googleCalendarDataSourceProvider = Provider<GoogleCalendarDataSource>((ref) {
-  ref.keepAlive();
-  return GoogleCalendarDataSource();
+  return GoogleCalendarDataSource(); // Singleton instance
 });
 
 // Calendar sync service provider

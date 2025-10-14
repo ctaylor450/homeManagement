@@ -4,6 +4,16 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 
 class GoogleCalendarDataSource {
+  // Singleton pattern
+  static final GoogleCalendarDataSource _instance = GoogleCalendarDataSource._internal();
+  
+  factory GoogleCalendarDataSource() {
+    return _instance;
+  }
+  
+  GoogleCalendarDataSource._internal();
+  
+  // Instance variables
   CalendarApi? _calendarApi;
   AuthClient? _authClient;
 
