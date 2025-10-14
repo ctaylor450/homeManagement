@@ -54,8 +54,6 @@ class CalendarRepository {
         .collection(FirebaseConstants.calendarEventsCollection)
         .where('householdId', isEqualTo: householdId)
         .where('isShared', isEqualTo: true)
-        .where('startTime', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-        .where('startTime', isLessThanOrEqualTo: Timestamp.fromDate(end))
         .orderBy('startTime')
         .snapshots()
         .map((snapshot) => snapshot.docs
