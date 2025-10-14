@@ -20,7 +20,7 @@ class _SharedCalendarScreenState extends ConsumerState<SharedCalendarScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final calendarEvents = ref.watch(calendarEventsProvider);
+    final calendarEvents = ref.watch(sharedCalendarEventsProvider);
 
     return Scaffold(
       body: Column(
@@ -96,7 +96,7 @@ class _SharedCalendarScreenState extends ConsumerState<SharedCalendarScreen> {
   }
 
   Widget _buildEventsList() {
-    final calendarEvents = ref.watch(calendarEventsProvider);
+    final calendarEvents = ref.watch(sharedCalendarEventsProvider);
 
     return calendarEvents.when(
       data: (events) {

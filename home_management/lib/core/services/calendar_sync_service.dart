@@ -1,5 +1,5 @@
 // lib/core/services/calendar_sync_service.dart
-// UPDATED VERSION WITH BI-DIRECTIONAL SYNC
+// FIXED VERSION - NO DUPLICATES + PROPER BI-DIRECTIONAL SYNC
 
 import 'package:flutter/foundation.dart';
 import 'package:googleapis/calendar/v3.dart' as google_calendar;
@@ -17,7 +17,6 @@ class CalendarSyncService {
   );
 
   // ============ NEW: Create shared event in BOTH places ============
-  /// Create event in both the shared Google Calendar AND Firestore
   Future<void> createSharedEventInBoth({
     required CalendarEventModel event,
     required String sharedGoogleCalendarId,
@@ -58,7 +57,6 @@ class CalendarSyncService {
   }
 
   // ============ NEW: Update shared event in BOTH places ============
-  /// Update event in both the shared Google Calendar AND Firestore
   Future<void> updateSharedEventInBoth({
     required String eventId,
     required String sharedGoogleCalendarId,
@@ -107,7 +105,6 @@ class CalendarSyncService {
   }
 
   // ============ NEW: Delete shared event from BOTH places ============
-  /// Delete event from both the shared Google Calendar AND Firestore
   Future<void> deleteSharedEventFromBoth({
     required String eventId,
     required String sharedGoogleCalendarId,
@@ -131,7 +128,184 @@ class CalendarSyncService {
     }
   }
 
-  // ============ EXISTING: Sync Google Calendar (personal) ============
+  // ============ FIXED: Sync shared Google Calendar (BOTH DIRECTIONS, NO DUPLICATES) ============
+  Future<void> syncSharedGoogleCalendar(
+    String householdId,
+    String sharedGoogleCalendarId,
+  ) async {
+    try {
+      final now = DateTime.now();
+      final start = now.subtract(const Duration(days: 90)); // Increased range
+      final end = now.add(const Duration(days: 365)); // Increased range
+
+      // STEP 1: Pull events FROM Google Calendar
+      final googleEvents = await _googleCalendarDataSource.fetchEvents(
+        sharedGoogleCalendarId,
+        start,
+        end,
+      );
+
+      debugPrint('📥 Found ${googleEvents.length} events in shared Google Calendar');
+
+      // Get ALL existing shared events from Firestore (not just in date range)
+      final allEvents = await _calendarRepository
+          .getEventsInRange(householdId, start, end)
+          .first;
+      
+      // Filter to only SHARED events
+      final existingSharedEvents = allEvents.where((e) => e.isShared).toList();
+      
+      debugPrint('📱 Found ${existingSharedEvents.length} shared events in Firestore');
+
+      // Create a map of Google event IDs for quick lookup
+      final existingEventsByGoogleId = <String, CalendarEventModel>{};
+      for (final event in existingSharedEvents) {
+        if (event.googleEventId != null) {
+          existingEventsByGoogleId[event.googleEventId!] = event;
+        }
+      }
+
+      // Process Google Calendar events
+      int created = 0;
+      int updated = 0;
+      
+      for (final googleEvent in googleEvents) {
+        if (googleEvent.start?.dateTime == null || googleEvent.end?.dateTime == null) {
+          continue;
+        }
+
+        if (googleEvent.id == null) {
+          debugPrint('⚠️ Skipping event with no ID: ${googleEvent.summary}');
+          continue;
+        }
+
+        final existingEvent = existingEventsByGoogleId[googleEvent.id];
+
+        if (existingEvent != null) {
+          // Event exists - check if it needs updating
+          final updates = <String, dynamic>{};
+          
+          if (existingEvent.title != (googleEvent.summary ?? 'Untitled Event')) {
+            updates['title'] = googleEvent.summary ?? 'Untitled Event';
+          }
+          
+          if (existingEvent.description != googleEvent.description) {
+            updates['description'] = googleEvent.description;
+          }
+          
+          if (existingEvent.startTime != googleEvent.start!.dateTime) {
+            updates['startTime'] = googleEvent.start!.dateTime;
+          }
+          
+          if (existingEvent.endTime != googleEvent.end!.dateTime) {
+            updates['endTime'] = googleEvent.end!.dateTime;
+          }
+
+          if (updates.isNotEmpty) {
+            await _calendarRepository.updateEvent(existingEvent.id, updates);
+            updated++;
+            debugPrint('✏️ Updated event: ${googleEvent.summary}');
+          }
+        } else {
+          // NEW event from Google - create in Firestore
+          final calendarEvent = CalendarEventModel(
+            id: '',
+            title: googleEvent.summary ?? 'Untitled Event',
+            description: googleEvent.description,
+            startTime: googleEvent.start!.dateTime!,
+            endTime: googleEvent.end!.dateTime!,
+            userId: '',
+            householdId: householdId,
+            isShared: true,
+            googleEventId: googleEvent.id,
+            type: EventType.event,
+          );
+
+          await _calendarRepository.createEvent(calendarEvent);
+          created++;
+          debugPrint('✅ Created new event from Google: ${googleEvent.summary}');
+        }
+      }
+
+      // STEP 2: Push NEW shared events FROM app TO Google Calendar
+      // Find events that are shared but don't have a googleEventId yet
+      final eventsToSync = existingSharedEvents.where(
+        (e) => e.googleEventId == null,
+      ).toList();
+
+      int pushed = 0;
+      
+      for (final event in eventsToSync) {
+        try {
+          debugPrint('📤 Pushing local event to Google Calendar: ${event.title}');
+          
+          final googleEvent = google_calendar.Event(
+            summary: event.title,
+            description: event.description,
+            start: google_calendar.EventDateTime(
+              dateTime: event.startTime,
+              timeZone: 'UTC',
+            ),
+            end: google_calendar.EventDateTime(
+              dateTime: event.endTime,
+              timeZone: 'UTC',
+            ),
+          );
+
+          final createdEvent = await _googleCalendarDataSource.createEvent(
+            sharedGoogleCalendarId,
+            googleEvent,
+          );
+
+          // Update Firestore event with Google event ID
+          if (createdEvent != null && createdEvent.id != null) {
+            await _calendarRepository.updateEvent(
+              event.id,
+              {'googleEventId': createdEvent.id},
+            );
+            pushed++;
+            debugPrint('✅ Successfully pushed event to Google: ${event.title}');
+          }
+        } catch (e) {
+          debugPrint('❌ Error pushing event ${event.title} to Google: $e');
+          // Continue with other events even if one fails
+        }
+      }
+
+      // STEP 3: Clean up deleted events (events in Firestore but not in Google)
+      final googleEventIds = googleEvents
+          .where((e) => e.id != null)
+          .map((e) => e.id!)
+          .toSet();
+
+      int deleted = 0;
+      
+      for (final existingEvent in existingSharedEvents) {
+        if (existingEvent.googleEventId != null &&
+            !googleEventIds.contains(existingEvent.googleEventId)) {
+          await _calendarRepository.deleteEvent(existingEvent.id);
+          deleted++;
+          debugPrint('🗑️ Deleted event no longer in Google Calendar: ${existingEvent.title}');
+        }
+      }
+
+      debugPrint('');
+      debugPrint('✨ Sync Summary:');
+      debugPrint('   📥 Created from Google: $created');
+      debugPrint('   ✏️  Updated from Google: $updated');
+      debugPrint('   📤 Pushed to Google: $pushed');
+      debugPrint('   🗑️  Deleted: $deleted');
+      debugPrint('✅ Bi-directional shared calendar sync completed');
+      debugPrint('');
+      
+    } catch (e) {
+      debugPrint('❌ Error syncing shared Google Calendar: $e');
+      rethrow;
+    }
+  }
+
+  // ============ EXISTING: Personal calendar sync methods ============
+  
   Future<void> syncGoogleCalendar(
     String userId,
     String householdId,
@@ -173,152 +347,6 @@ class CalendarSyncService {
     }
   }
 
-  // ============ UPDATED: Sync shared Google Calendar (BOTH DIRECTIONS) ============
-  /// Sync shared Google Calendar with bi-directional support
-  /// - Pulls events FROM Google TO app
-  /// - Pushes NEW events FROM app TO Google (if they don't have googleEventId)
-  Future<void> syncSharedGoogleCalendar(
-    String householdId,
-    String sharedGoogleCalendarId,
-  ) async {
-    try {
-      final now = DateTime.now();
-      final start = now.subtract(const Duration(days: 30));
-      final end = now.add(const Duration(days: 90));
-
-      // STEP 1: Pull events FROM Google Calendar TO app
-      final googleEvents = await _googleCalendarDataSource.fetchEvents(
-        sharedGoogleCalendarId,
-        start,
-        end,
-      );
-
-      debugPrint('Found ${googleEvents.length} events in shared Google Calendar');
-
-      // Get existing events from Firestore
-      final existingEvents = await _calendarRepository
-          .getEventsInRange(householdId, start, end)
-          .first;
-
-      // Process Google Calendar events
-      for (final event in googleEvents) {
-        if (event.start?.dateTime == null || event.end?.dateTime == null) {
-          continue;
-        }
-
-        final existingEvent = existingEvents.where(
-          (e) => e.googleEventId == event.id,
-        ).firstOrNull;
-
-        if (existingEvent != null) {
-          // Update existing event if it changed
-          final updates = <String, dynamic>{};
-          
-          if (existingEvent.title != (event.summary ?? 'Untitled Event')) {
-            updates['title'] = event.summary ?? 'Untitled Event';
-          }
-          
-          if (existingEvent.description != event.description) {
-            updates['description'] = event.description;
-          }
-          
-          if (existingEvent.startTime != event.start!.dateTime) {
-            updates['startTime'] = event.start!.dateTime;
-          }
-          
-          if (existingEvent.endTime != event.end!.dateTime) {
-            updates['endTime'] = event.end!.dateTime;
-          }
-
-          if (updates.isNotEmpty) {
-            await _calendarRepository.updateEvent(existingEvent.id, updates);
-            debugPrint('Updated synced event: ${event.summary}');
-          }
-        } else {
-          // Create new event in Firestore
-          final calendarEvent = CalendarEventModel(
-            id: '',
-            title: event.summary ?? 'Untitled Event',
-            description: event.description,
-            startTime: event.start!.dateTime!,
-            endTime: event.end!.dateTime!,
-            userId: '',
-            householdId: householdId,
-            isShared: true,
-            googleEventId: event.id,
-            type: EventType.event,
-          );
-
-          await _calendarRepository.createEvent(calendarEvent);
-          debugPrint('Created synced event: ${event.summary}');
-        }
-      }
-
-      // STEP 2: Push NEW shared events FROM app TO Google Calendar
-      // Find events that are shared but don't have a googleEventId yet
-      final sharedEventsWithoutGoogleId = existingEvents.where(
-        (e) => e.isShared && e.googleEventId == null,
-      ).toList();
-
-      for (final event in sharedEventsWithoutGoogleId) {
-        try {
-          debugPrint('Pushing local event to Google Calendar: ${event.title}');
-          
-          final googleEvent = google_calendar.Event(
-            summary: event.title,
-            description: event.description,
-            start: google_calendar.EventDateTime(
-              dateTime: event.startTime,
-              timeZone: 'UTC',
-            ),
-            end: google_calendar.EventDateTime(
-              dateTime: event.endTime,
-              timeZone: 'UTC',
-            ),
-          );
-
-          final createdEvent = await _googleCalendarDataSource.createEvent(
-            sharedGoogleCalendarId,
-            googleEvent,
-          );
-
-          // Update Firestore event with Google event ID
-          if (createdEvent != null && createdEvent.id != null) {
-            await _calendarRepository.updateEvent(
-              event.id,
-              {'googleEventId': createdEvent.id},
-            );
-            debugPrint('Successfully pushed event to Google: ${event.title}');
-          }
-        } catch (e) {
-          debugPrint('Error pushing event ${event.title} to Google: $e');
-          // Continue with other events even if one fails
-        }
-      }
-
-      // STEP 3: Clean up deleted events
-      final googleEventIds = googleEvents
-          .where((e) => e.id != null)
-          .map((e) => e.id!)
-          .toSet();
-
-      for (final existingEvent in existingEvents) {
-        if (existingEvent.googleEventId != null &&
-            existingEvent.isShared &&
-            !googleEventIds.contains(existingEvent.googleEventId)) {
-          await _calendarRepository.deleteEvent(existingEvent.id);
-          debugPrint('Deleted event no longer in Google Calendar: ${existingEvent.title}');
-        }
-      }
-
-      debugPrint('Bi-directional shared calendar sync completed');
-    } catch (e) {
-      debugPrint('Error syncing shared Google Calendar: $e');
-      rethrow;
-    }
-  }
-
-  // ============ EXISTING: Create personal event in both places ============
   Future<void> createEventInBoth({
     required CalendarEventModel event,
     required String googleCalendarId,
@@ -356,7 +384,6 @@ class CalendarSyncService {
     }
   }
 
-  // ============ EXISTING: Update personal event in both places ============
   Future<void> updateEventInBoth({
     required String eventId,
     required String googleCalendarId,
@@ -397,7 +424,6 @@ class CalendarSyncService {
     }
   }
 
-  // ============ EXISTING: Delete personal event from both places ============
   Future<void> deleteEventFromBoth({
     required String eventId,
     required String googleCalendarId,
@@ -415,6 +441,26 @@ class CalendarSyncService {
     } catch (e) {
       debugPrint('Error deleting event from both calendars: $e');
       rethrow;
+    }
+  }
+
+  Future<bool> checkAvailability({
+    required String userId,
+    required String googleCalendarId,
+    required DateTime start,
+    required DateTime end,
+  }) async {
+    try {
+      final events = await _googleCalendarDataSource.fetchEvents(
+        googleCalendarId,
+        start,
+        end,
+      );
+
+      return events.isEmpty;
+    } catch (e) {
+      debugPrint('Error checking availability: $e');
+      return true;
     }
   }
 }
