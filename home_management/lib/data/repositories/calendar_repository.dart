@@ -35,8 +35,6 @@ class CalendarRepository {
     return _firestore
         .collection(FirebaseConstants.calendarEventsCollection)
         .where('userId', isEqualTo: userId)
-        .where('startTime', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-        .where('startTime', isLessThanOrEqualTo: Timestamp.fromDate(end))
         .orderBy('startTime')
         .snapshots()
         .map((snapshot) => snapshot.docs
