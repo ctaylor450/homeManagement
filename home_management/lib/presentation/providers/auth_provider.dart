@@ -7,6 +7,7 @@ import '../../data/datasources/firebase_datasource.dart';
 import '../../data/datasources/google_calendar_datasource.dart';
 import '../../data/repositories/user_repository.dart';
 import '../../data/models/user_model.dart';
+import 'calendar_provider.dart';
 
 /// Providers
 final firebaseDataSourceProvider = Provider<FirebaseDataSource>((ref) {
@@ -167,6 +168,10 @@ class AuthActions {
       // Initialize Google Calendar API
       final calendarDataSource = ref.read(googleCalendarDataSourceProvider);
       await calendarDataSource.initialize(accessToken);
+
+      // ref.invalidate(calendarSyncServiceProvider);
+      // print('✅ Calendar sync service invalidated and will be recreated with initialized API');
+
 
       // Get primary calendar ID
       final calendarId = await calendarDataSource.getPrimaryCalendarId();

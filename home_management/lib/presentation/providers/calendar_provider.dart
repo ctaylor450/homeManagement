@@ -22,6 +22,7 @@ final calendarRepositoryProvider = Provider<CalendarRepository>((ref) {
 
 // Google Calendar datasource provider
 final googleCalendarDataSourceProvider = Provider<GoogleCalendarDataSource>((ref) {
+  ref.keepAlive();
   return GoogleCalendarDataSource();
 });
 
@@ -358,39 +359,39 @@ class CalendarActions {
   }
 
   /// Check availability across both Firestore and Google Calendar
-  Future<bool> checkAvailability({
-    required DateTime start,
-    required DateTime end,
-  }) async {
-    try {
-      final syncService = ref.read(calendarSyncServiceProvider);
-      final userId = ref.read(currentUserIdProvider);
-      final user = ref.read(currentUserProvider).value;
+  // Future<bool> checkAvailability({
+  //   required DateTime start,
+  //   required DateTime end,
+  // }) async {
+  //   try {
+  //     final syncService = ref.read(calendarSyncServiceProvider);
+  //     final userId = ref.read(currentUserIdProvider);
+  //     final user = ref.read(currentUserProvider).value;
 
-      if (userId == null) {
-        throw Exception('No user logged in');
-      }
+  //     if (userId == null) {
+  //       throw Exception('No user logged in');
+  //     }
 
-      final googleCalendarId = user?.googleCalendarId;
+  //     final googleCalendarId = user?.googleCalendarId;
       
-      if (googleCalendarId != null) {
-        return await syncService.checkAvailability(
-          userId: userId,
-          googleCalendarId: googleCalendarId,
-          start: start,
-          end: end,
-        );
-      } else {
-        // Just check Firestore if no Google Calendar
-        final repository = ref.read(calendarRepositoryProvider);
-        return await repository.checkAvailability(userId, start, end);
-      }
-    } catch (e) {
-      // ignore: avoid_print
-      print('Error checking availability: $e');
-      return false;
-    }
-  }
+  //     if (googleCalendarId != null) {
+  //       return await syncService.checkAvailability(
+  //         userId: userId,
+  //         googleCalendarId: googleCalendarId,
+  //         start: start,
+  //         end: end,
+  //       );
+  //     } else {
+  //       // Just check Firestore if no Google Calendar
+  //       final repository = ref.read(calendarRepositoryProvider);
+  //       return await repository.checkAvailability(userId, start, end);
+  //     }
+  //   } catch (e) {
+  //     // ignore: avoid_print
+  //     print('Error checking availability: $e');
+  //     return false;
+  //   }
+  // }
 
   /// Force refresh Google Calendar access token
   Future<void> refreshGoogleCalendarToken() async {

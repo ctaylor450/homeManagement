@@ -5,7 +5,7 @@ import 'core/theme/app_theme.dart';
 import 'core/services/notification_service.dart';
 import 'core/services/auto_sync_service.dart';
 import 'presentation/providers/auth_provider.dart';
-import 'presentation/providers/calendar_provider.dart';
+import 'presentation/providers/calendar_provider.dart' as cal;
 import 'presentation/providers/auto_sync_provider.dart'; // NEW IMPORT
 import 'presentation/screens/auth/login_screen.dart';
 import 'presentation/screens/home/home_screen.dart';
@@ -54,7 +54,25 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     // Initialize auto-sync when app starts
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _initializeAutoSync();
+      _reinitializeCalendarApi();
     });
+  }
+
+  Future<void> _reinitializeCalendarApi() async {
+    try {
+      final storage = ref.read(secureStorageProvider);
+      final accessToken = await storage.read(key: 'google_access_token');
+      
+      if (accessToken != null && accessToken.isNotEmpty) {
+        final calendarDataSource = ref.read(googleCalendarDataSourceProvider);
+        await calendarDataSource.initialize(accessToken);
+        print('✅ Calendar API re-initialized on app startup');
+      } else {
+        print('⚠️ No stored access token found');
+      }
+    } catch (e) {
+      print('❌ Error re-initializing Calendar API: $e');
+    }
   }
 
   @override
@@ -79,7 +97,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
       ref.read(sharedCalendarAutoSyncProvider);
       
       // Check if personal calendar auto-sync is enabled (EXISTING)
-      final prefs = await ref.read(calendarPreferencesProvider.future);
+      final prefs = await ref.read(cal.calendarPreferencesProvider.future);
       
       if (prefs.autoSyncEnabled) {
         _startAutoSync();
@@ -96,7 +114,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     // Create new auto-sync service for personal calendar
     _autoSyncService = AutoSyncService(
       onSync: () async {
-        await ref.read(calendarActionsProvider).autoSyncIfDue();
+        await ref.read(cal.calendarActionsProvider).autoSyncIfDue();
       },
       interval: const Duration(minutes: 30),
     );
@@ -107,7 +125,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   Future<void> _performAutoSyncIfEnabled() async {
     try {
       // Sync personal calendar (EXISTING)
-      await ref.read(calendarActionsProvider).autoSyncIfDue();
+      await ref.read(cal.calendarActionsProvider).autoSyncIfDue();
       
       // Manually trigger shared calendar sync (NEW)
       final sharedSync = ref.read(sharedCalendarAutoSyncProvider);
@@ -122,7 +140,7 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
     final authState = ref.watch(authStateProvider);
 
     // Listen to auto-sync preference changes
-    ref.listen<AsyncValue<bool>>(autoSyncEnabledProvider, (previous, next) {
+    ref.listen<AsyncValue<bool>>(cal.autoSyncEnabledProvider, (previous, next) {
       next.whenData((enabled) {
         if (enabled) {
           _startAutoSync();
