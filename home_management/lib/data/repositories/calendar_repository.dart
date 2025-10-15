@@ -1,6 +1,5 @@
 // lib/data/repositories/calendar_repository.dart
-// 
-// This repository uses optimized Firestore queries that work with existing indexes
+// FINAL FIX - Replace entire file with this
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/calendar_event_model.dart';
@@ -30,67 +29,113 @@ class CalendarRepository {
             .toList());
   }
 
-  // OPTIMIZED: Get personal events - uses existing index
-  Stream<List<CalendarEventModel>> getPersonalEvents(
-    String userId,
-    DateTime start,
-    DateTime end,
-  ) {
-    return _firestore
-        .collection(FirebaseConstants.calendarEventsCollection)
-        .where('userId', isEqualTo: userId)
-        .where('isShared', isEqualTo: false)
-        .orderBy('startTime')
-        .snapshots()
-        .map((snapshot) {
-          final allEvents = snapshot.docs
-              .map((doc) => CalendarEventModel.fromFirestore(doc))
-              .toList();
-          
-          // Filter by date range in memory to avoid complex index
-          return allEvents
-              .where((event) =>
-                  !event.startTime.isBefore(start) &&
-                  event.startTime.isBefore(end))
-              .toList();
-        });
-  }
-
-  // OPTIMIZED: Get shared events - uses existing index  
+  // FIXED: Simplified shared events query
   Stream<List<CalendarEventModel>> getSharedEvents(
     String householdId,
     DateTime start,
     DateTime end,
   ) {
+    print('🔍 Repository: Querying shared events');
+    print('   householdId: $householdId');
+    print('   start: $start');
+    print('   end: $end');
+    
     return _firestore
         .collection(FirebaseConstants.calendarEventsCollection)
         .where('householdId', isEqualTo: householdId)
         .where('isShared', isEqualTo: true)
-        .orderBy('startTime')
         .snapshots()
         .map((snapshot) {
+          print('📦 Repository: Raw snapshot has ${snapshot.docs.length} documents');
+          
+          final allEvents = snapshot.docs.map((doc) {
+            try {
+              return CalendarEventModel.fromFirestore(doc);
+            } catch (e) {
+              print('❌ Error parsing document ${doc.id}: $e');
+              return null;
+            }
+          }).whereType<CalendarEventModel>().toList();
+          
+          print('📄 Repository: Parsed ${allEvents.length} events successfully');
+          
+          // Sort by startTime
+          allEvents.sort((a, b) => a.startTime.compareTo(b.startTime));
+          
+          // Filter by date range - FIXED logic
+          final filtered = allEvents.where((event) {
+            // Event must be on or after start date AND before or on end date
+            final isAfterOrOnStart = event.startTime.isAtSameMomentAs(start) || 
+                                      event.startTime.isAfter(start);
+            final isBeforeOrOnEnd = event.startTime.isBefore(end) || 
+                                     event.startTime.isAtSameMomentAs(end);
+            
+            final included = isAfterOrOnStart && isBeforeOrOnEnd;
+            
+            if (!included) {
+              print('   ❌ Filtered OUT: ${event.title} (${event.startTime})');
+              print('      isAfterOrOnStart: $isAfterOrOnStart, isBeforeOrOnEnd: $isBeforeOrOnEnd');
+            } else {
+              print('   ✅ Included: ${event.title} (${event.startTime})');
+            }
+            
+            return included;
+          }).toList();
+          
+          print('✅ Repository: Returning ${filtered.length} filtered events');
+          return filtered;
+        });
+  }
+
+  // FIXED: Simplified personal events query
+  Stream<List<CalendarEventModel>> getPersonalEvents(
+    String userId,
+    DateTime start,
+    DateTime end,
+  ) {
+    print('🔍 Repository: Querying personal events for userId: $userId');
+    
+    return _firestore
+        .collection(FirebaseConstants.calendarEventsCollection)
+        .where('userId', isEqualTo: userId)
+        .where('isShared', isEqualTo: false)
+        .snapshots()
+        .map((snapshot) {
+          print('📦 Repository: Found ${snapshot.docs.length} personal events');
+          
           final allEvents = snapshot.docs
               .map((doc) => CalendarEventModel.fromFirestore(doc))
               .toList();
           
-          // Filter by date range in memory to avoid complex index
-          return allEvents
-              .where((event) =>
-                  !event.startTime.isBefore(start) &&
-                  event.startTime.isBefore(end))
-              .toList();
+          // Sort by startTime
+          allEvents.sort((a, b) => a.startTime.compareTo(b.startTime));
+          
+          // Filter by date range - FIXED logic
+          return allEvents.where((event) {
+            final isAfterOrOnStart = event.startTime.isAtSameMomentAs(start) || 
+                                      event.startTime.isAfter(start);
+            final isBeforeOrOnEnd = event.startTime.isBefore(end) || 
+                                     event.startTime.isAtSameMomentAs(end);
+            return isAfterOrOnStart && isBeforeOrOnEnd;
+          }).toList();
         });
   }
 
   // Create event
   Future<String> createEvent(CalendarEventModel event) async {
     try {
+      print('💾 Creating event: ${event.title}');
+      print('   - householdId: ${event.householdId}');
+      print('   - isShared: ${event.isShared}');
+      
       final docRef = await _firestore
           .collection(FirebaseConstants.calendarEventsCollection)
           .add(event.toFirestore());
+      
+      print('✅ Event created with ID: ${docRef.id}');
       return docRef.id;
     } catch (e) {
-      print('Error creating event: $e');
+      print('❌ Error creating event: $e');
       rethrow;
     }
   }

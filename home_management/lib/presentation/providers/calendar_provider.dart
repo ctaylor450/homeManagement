@@ -85,7 +85,7 @@ final personalCalendarEventsProvider = StreamProvider.autoDispose<List<CalendarE
     return Stream.value([]);
   }
 
-  final startDate = DateTime.now().subtract(const Duration(days: 30));
+  final startDate = DateTime.now().subtract(const Duration(days: 365));
   final endDate = DateTime.now().add(const Duration(days: 365));
 
   return repository.getPersonalEvents(userId, startDate, endDate);
@@ -101,7 +101,7 @@ final sharedCalendarEventsProvider = StreamProvider.autoDispose<List<CalendarEve
     return Stream.value([]);
   }
 
-  final startDate = DateTime.now().subtract(const Duration(days: 30));
+  final startDate = DateTime.now().subtract(const Duration(days: 365));
   final endDate = DateTime.now().add(const Duration(days: 365));
 
   return repository.getSharedEvents(householdId, startDate, endDate);
