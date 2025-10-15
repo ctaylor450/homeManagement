@@ -1,17 +1,13 @@
 // lib/presentation/screens/calendar/shared_calendar_screen.dart
-// COMPLETE FIXED VERSION - Shows both Personal and Shared events
-// Now includes Edit & Delete integrations via EditEventDialog and calendarActionsProvider
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:table_calendar/table_calendar.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../core/theme/app_theme.dart';
 import '../../../data/models/calendar_event_model.dart';
 import '../../providers/calendar_provider.dart';
 import '../../providers/household_provider.dart';
-import '../../providers/auth_provider.dart';
-import '../../widgets/loading_widget.dart';
+import '../../providers/auto_sync_provider.dart';
 import '../../widgets/create_event_dialog.dart';
 import '../../widgets/edit_event_dialog.dart';
 
@@ -26,92 +22,43 @@ class SharedCalendarScreen extends ConsumerStatefulWidget {
 class _SharedCalendarScreenState extends ConsumerState<SharedCalendarScreen> {
   DateTime _focusedDay = DateTime.now();
   DateTime? _selectedDay;
+  bool _isSyncing = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _debugCheckFirestoreData();
-  }
+  Future<void> _handleResync() async {
+    setState(() => _isSyncing = true);
 
-  Future<void> _debugCheckFirestoreData() async {
-    print('\n═══════════════════════════════════════');
-    print('🔍 DEBUG: Checking Firestore Data');
-    print('═══════════════════════════════════════');
-    
     try {
-      final allEventsSnapshot = await FirebaseFirestore.instance
-          .collection('calendar_events')
-          .get();
-      print('📊 Total events in Firestore: ${allEventsSnapshot.docs.length}');
+      // Sync personal calendar
+      await ref.read(calendarActionsProvider).syncGoogleCalendar();
       
-      final sharedEventsSnapshot = await FirebaseFirestore.instance
-          .collection('calendar_events')
-          .where('isShared', isEqualTo: true)
-          .get();
-      print('📊 Total SHARED events: ${sharedEventsSnapshot.docs.length}');
-      
-      for (var doc in sharedEventsSnapshot.docs) {
-        final data = doc.data();
-        print('  📄 ${doc.id}:');
-        print('     - title: ${data['title']}');
-        print('     - householdId: ${data['householdId']}');
-        print('     - isShared: ${data['isShared']}');
-        print('     - startTime: ${data['startTime']}');
+      // Sync shared calendar
+      final sharedSync = ref.read(sharedCalendarAutoSyncProvider);
+      await sharedSync.manualSync();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Calendars synced successfully!'),
+            backgroundColor: Colors.green,
+          ),
+        );
       }
-      
-      final household = await ref.read(currentHouseholdProvider.future);
-      print('🏠 Current household ID: ${household?.id}');
-      print('🏠 Household name: ${household?.name}');
-      
-      if (household != null) {
-        final householdEventsSnapshot = await FirebaseFirestore.instance
-            .collection('calendar_events')
-            .where('householdId', isEqualTo: household.id)
-            .where('isShared', isEqualTo: true)
-            .get();
-        print('📊 Shared events for THIS household: ${householdEventsSnapshot.docs.length}');
-      }
-      
-      print('\n📱 CHECKING PERSONAL EVENTS:');
-      final currentUserId = ref.read(currentUserIdProvider);
-      print('👤 Current user ID: $currentUserId');
-
-      final personalEventsSnapshot = await FirebaseFirestore.instance
-          .collection('calendar_events')
-          .where('isShared', isEqualTo: false)
-          .get();
-
-      print('📊 Total PERSONAL events (any user): ${personalEventsSnapshot.docs.length}');
-
-      for (var doc in personalEventsSnapshot.docs) {
-        final data = doc.data();
-        final timestamp = data['startTime'] as Timestamp;
-        final startTime = timestamp.toDate();
-        print('  📄 ${doc.id}:');
-        print('     - title: ${data['title']}');
-        print('     - userId: ${data['userId']}');
-        print('     - isShared: ${data['isShared']}');
-        print('     - startTime: $startTime');
-        print('     - Matches current user? ${data['userId'] == currentUserId}');
-      }
-
-      if (currentUserId != null) {
-        final myPersonalEventsSnapshot = await FirebaseFirestore.instance
-            .collection('calendar_events')
-            .where('userId', isEqualTo: currentUserId)
-            .where('isShared', isEqualTo: false)
-            .get();
-
-        print('📊 Personal events for THIS user: ${myPersonalEventsSnapshot.docs.length}');
-      }
-      
-      print('═══════════════════════════════════════\n');
     } catch (e) {
-      print('❌ Debug error: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Sync failed: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSyncing = false);
+      }
     }
   }
 
-  // ====== NEW: helpers for edit & delete ======
   Future<void> _openEdit(CalendarEventModel event) async {
     final updated = await showDialog<bool>(
       context: context,
@@ -119,10 +66,6 @@ class _SharedCalendarScreenState extends ConsumerState<SharedCalendarScreen> {
     );
 
     if (updated == true && mounted) {
-      // If your streams don’t auto-refresh, you can force refresh:
-      // ref.invalidate(sharedCalendarEventsProvider);
-      // ref.invalidate(personalCalendarEventsProvider);
-
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Event updated')),
       );
@@ -134,7 +77,7 @@ class _SharedCalendarScreenState extends ConsumerState<SharedCalendarScreen> {
       context: context,
       builder: (_) => AlertDialog(
         title: const Text('Delete event?'),
-        content: Text('“${event.title}” will be removed. This cannot be undone.'),
+        content: Text('"${event.title}" will be removed. This cannot be undone.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -150,13 +93,9 @@ class _SharedCalendarScreenState extends ConsumerState<SharedCalendarScreen> {
 
     if (confirm == true) {
       try {
-        await ref.read(calendarActionsProvider).deleteEvent(
-          event.id,
-          // syncToGoogle: true, // uncomment to force immediate Google deletion
-        );
+        await ref.read(calendarActionsProvider).deleteEvent(event.id);
 
         if (mounted) {
-          // If your list isn’t reactive, force refresh:
           ref.invalidate(sharedCalendarEventsProvider);
           ref.invalidate(personalCalendarEventsProvider);
 
@@ -173,28 +112,18 @@ class _SharedCalendarScreenState extends ConsumerState<SharedCalendarScreen> {
       }
     }
   }
-  // ====== END helpers ======
 
   @override
   Widget build(BuildContext context) {
-    // Watch BOTH providers
     final sharedEvents = ref.watch(sharedCalendarEventsProvider);
     final personalEvents = ref.watch(personalCalendarEventsProvider);
-    final household = ref.watch(currentHouseholdProvider);
 
-    // Combine the events
     final combinedEvents = <CalendarEventModel>[
       ...(sharedEvents.value ?? []),
       ...(personalEvents.value ?? []),
     ];
     combinedEvents.sort((a, b) => a.startTime.compareTo(b.startTime));
 
-    print('\n🔄 Calendar Screen build()');
-    print('   Shared: ${sharedEvents.value?.length ?? 0} events');
-    print('   Personal: ${personalEvents.value?.length ?? 0} events');
-    print('   Combined: ${combinedEvents.length} events');
-
-    // Determine loading state
     final isLoading = sharedEvents.isLoading || personalEvents.isLoading;
     final hasError = sharedEvents.hasError || personalEvents.hasError;
 
@@ -203,136 +132,111 @@ class _SharedCalendarScreenState extends ConsumerState<SharedCalendarScreen> {
         title: const Text('Calendar'),
         actions: [
           IconButton(
-            icon: const Icon(Icons.bug_report),
-            onPressed: _debugCheckFirestoreData,
-            tooltip: 'Debug Info',
-          ),
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            onPressed: () {
-              print('🔄 Manual refresh triggered');
-              ref.invalidate(sharedCalendarEventsProvider);
-              ref.invalidate(personalCalendarEventsProvider);
-            },
-            tooltip: 'Refresh',
+            icon: _isSyncing
+                ? const SizedBox(
+                    width: 20,
+                    height: 20,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 2,
+                      valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                    ),
+                  )
+                : const Icon(Icons.refresh),
+            onPressed: _isSyncing ? null : _handleResync,
+            tooltip: 'Re-sync calendars',
           ),
         ],
       ),
       body: Column(
         children: [
-          household.when(
-            data: (h) => Container(
-              color: Colors.blue[100],
-              padding: const EdgeInsets.all(8),
-              child: Row(
-                children: [
-                  const Icon(Icons.info, size: 16),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Household: ${h?.name ?? "None"} (${h?.id ?? "No ID"})',
-                      style: const TextStyle(fontSize: 12),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            loading: () => const SizedBox(),
-            error: (_, __) => const SizedBox(),
-          ),
-
           if (isLoading)
-            const Padding(
-              padding: EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  LoadingWidget(),
-                  SizedBox(height: 8),
-                  Text('Loading events...'),
-                ],
-              ),
-            )
+            const LinearProgressIndicator()
           else if (hasError)
-            Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                children: [
-                  const Icon(Icons.error, color: Colors.red, size: 48),
-                  const SizedBox(height: 8),
-                  const Text('Error loading events'),
-                  const SizedBox(height: 8),
-                  ElevatedButton(
-                    onPressed: () {
-                      ref.invalidate(sharedCalendarEventsProvider);
-                      ref.invalidate(personalCalendarEventsProvider);
-                    },
-                    child: const Text('Retry'),
-                  ),
-                ],
-              ),
-            )
-          else ...[
             Container(
-              color: combinedEvents.isEmpty ? Colors.orange[100] : Colors.green[100],
+              color: Colors.red[100],
               padding: const EdgeInsets.all(8),
-              child: Row(
+              child: const Row(
                 children: [
-                  Icon(
-                    combinedEvents.isEmpty ? Icons.warning : Icons.check_circle,
-                    size: 16,
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    '${combinedEvents.length} events (${sharedEvents.value?.length ?? 0} shared + ${personalEvents.value?.length ?? 0} personal)',
-                    style: const TextStyle(fontSize: 12),
-                  ),
+                  Icon(Icons.error, size: 16, color: Colors.red),
+                  SizedBox(width: 8),
+                  Text('Error loading events'),
                 ],
               ),
             ),
-            TableCalendar(
-              firstDay: DateTime.utc(2020, 1, 1),
-              lastDay: DateTime.utc(2030, 12, 31),
-              focusedDay: _focusedDay,
-              selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
-              calendarFormat: CalendarFormat.month,
-              startingDayOfWeek: StartingDayOfWeek.monday,
-              calendarStyle: CalendarStyle(
-                selectedDecoration: const BoxDecoration(
-                  color: AppTheme.primaryColor,
-                  shape: BoxShape.circle,
-                ),
-                todayDecoration: BoxDecoration(
-                  color: AppTheme.primaryColor.withValues(alpha: 0.3),
-                  shape: BoxShape.circle,
-                ),
-                markerDecoration: const BoxDecoration(
-                  color: AppTheme.accentColor,
-                  shape: BoxShape.circle,
-                ),
+          TableCalendar(
+            firstDay: DateTime.utc(2020, 1, 1),
+            lastDay: DateTime.utc(2030, 12, 31),
+            focusedDay: _focusedDay,
+            selectedDayPredicate: (day) => isSameDay(_selectedDay, day),
+            calendarFormat: CalendarFormat.month,
+            startingDayOfWeek: StartingDayOfWeek.monday,
+            calendarStyle: CalendarStyle(
+              selectedDecoration: const BoxDecoration(
+                color: AppTheme.primaryColor,
+                shape: BoxShape.circle,
               ),
-              onDaySelected: (selectedDay, focusedDay) {
-                setState(() {
-                  _selectedDay = selectedDay;
-                  _focusedDay = focusedDay;
-                });
-                print('📅 Day selected: $selectedDay');
-              },
-              onPageChanged: (focusedDay) {
+              todayDecoration: BoxDecoration(
+                color: AppTheme.primaryColor.withValues(alpha: 0.3),
+                shape: BoxShape.circle,
+              ),
+              markerDecoration: const BoxDecoration(
+                color: AppTheme.accentColor,
+                shape: BoxShape.circle,
+              ),
+            ),
+            onDaySelected: (selectedDay, focusedDay) {
+              setState(() {
+                _selectedDay = selectedDay;
                 _focusedDay = focusedDay;
-                print('📅 Page changed: $focusedDay');
-              },
-              eventLoader: (day) {
-                final dayEvents = combinedEvents
-                    .where((event) => isSameDay(event.startTime, day))
-                    .toList();
-                if (dayEvents.isNotEmpty) {
-                  print('📌 Events for $day: ${dayEvents.length}');
-                }
-                return dayEvents;
+              });
+            },
+            onPageChanged: (focusedDay) {
+              _focusedDay = focusedDay;
+            },
+            eventLoader: (day) {
+              return combinedEvents
+                  .where((event) => isSameDay(event.startTime, day))
+                  .toList();
+            },
+            calendarBuilders: CalendarBuilders(
+              markerBuilder: (context, day, events) {
+                if (events.isEmpty) return const SizedBox();
+
+                final dayEvents = events.cast<CalendarEventModel>();
+                final hasShared = dayEvents.any((e) => e.isShared);
+                final hasPersonal = dayEvents.any((e) => !e.isShared);
+
+                return Positioned(
+                  bottom: 1,
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      if (hasShared)
+                        Container(
+                          width: 6,
+                          height: 6,
+                          margin: const EdgeInsets.symmetric(horizontal: 1),
+                          decoration: const BoxDecoration(
+                            color: Colors.blue,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                      if (hasPersonal)
+                        Container(
+                          width: 6,
+                          height: 6,
+                          margin: const EdgeInsets.symmetric(horizontal: 1),
+                          decoration: const BoxDecoration(
+                            color: Colors.red,
+                            shape: BoxShape.circle,
+                          ),
+                        ),
+                    ],
+                  ),
+                );
               },
             ),
-          ],
-
+          ),
           const Divider(),
           Expanded(
             child: _buildEventsList(combinedEvents),
@@ -361,8 +265,6 @@ class _SharedCalendarScreenState extends ConsumerState<SharedCalendarScreen> {
             .toList()
         : allEvents;
 
-    print('📋 Building events list: ${selectedDayEvents.length} events');
-
     if (selectedDayEvents.isEmpty) {
       return Center(
         child: Column(
@@ -380,12 +282,6 @@ class _SharedCalendarScreenState extends ConsumerState<SharedCalendarScreen> {
                   : 'No events found',
               style: Theme.of(context).textTheme.titleMedium,
             ),
-            const SizedBox(height: 8),
-            ElevatedButton.icon(
-              onPressed: _debugCheckFirestoreData,
-              icon: const Icon(Icons.bug_report),
-              label: const Text('Debug Check'),
-            ),
           ],
         ),
       );
@@ -400,9 +296,7 @@ class _SharedCalendarScreenState extends ConsumerState<SharedCalendarScreen> {
           margin: const EdgeInsets.only(bottom: 12),
           child: ListTile(
             leading: Icon(
-              event.type.name == 'task'
-                  ? Icons.task_alt
-                  : Icons.event,
+              event.type.name == 'task' ? Icons.task_alt : Icons.event,
               color: AppTheme.primaryColor,
             ),
             title: Text(event.title),
@@ -425,54 +319,20 @@ class _SharedCalendarScreenState extends ConsumerState<SharedCalendarScreen> {
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
-                Text(
-                  'ID: ${event.id.substring(0, 8)}... | ${event.isShared ? "Shared" : "Personal"}',
-                  style: const TextStyle(fontSize: 10, color: Colors.grey),
-                ),
               ],
             ),
-
-            // NEW: tap to edit
             onTap: () => _openEdit(event),
-
-            // NEW: trailing actions incl. menu
-            trailing: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (event.isShared)
-                  const Icon(
-                    Icons.people,
-                    size: 16,
-                    color: Colors.green,
-                  )
-                else
-                  const Icon(
-                    Icons.person,
-                    size: 16,
-                    color: Colors.blue,
-                  ),
-                if (event.googleEventId != null)
-                  const Padding(
-                    padding: EdgeInsets.only(left: 4),
-                    child: Icon(
-                      Icons.sync,
-                      size: 16,
-                      color: Colors.blue,
-                    ),
-                  ),
-                PopupMenuButton<String>(
-                  onSelected: (value) {
-                    if (value == 'edit') {
-                      _openEdit(event);
-                    } else if (value == 'delete') {
-                      _confirmDelete(event);
-                    }
-                  },
-                  itemBuilder: (context) => const [
-                    PopupMenuItem(value: 'edit', child: Text('Edit')),
-                    PopupMenuItem(value: 'delete', child: Text('Delete')),
-                  ],
-                ),
+            trailing: PopupMenuButton<String>(
+              onSelected: (value) {
+                if (value == 'edit') {
+                  _openEdit(event);
+                } else if (value == 'delete') {
+                  _confirmDelete(event);
+                }
+              },
+              itemBuilder: (context) => const [
+                PopupMenuItem(value: 'edit', child: Text('Edit')),
+                PopupMenuItem(value: 'delete', child: Text('Delete')),
               ],
             ),
           ),
