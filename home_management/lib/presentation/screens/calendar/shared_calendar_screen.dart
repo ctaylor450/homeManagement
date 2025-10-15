@@ -1,5 +1,6 @@
 // lib/presentation/screens/calendar/shared_calendar_screen.dart
 // COMPLETE FIXED VERSION - Shows both Personal and Shared events
+// Now includes Edit & Delete integrations via EditEventDialog and calendarActionsProvider
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -12,6 +13,7 @@ import '../../providers/household_provider.dart';
 import '../../providers/auth_provider.dart';
 import '../../widgets/loading_widget.dart';
 import '../../widgets/create_event_dialog.dart';
+import '../../widgets/edit_event_dialog.dart';
 
 class SharedCalendarScreen extends ConsumerStatefulWidget {
   const SharedCalendarScreen({super.key});
@@ -108,6 +110,70 @@ class _SharedCalendarScreenState extends ConsumerState<SharedCalendarScreen> {
       print('❌ Debug error: $e');
     }
   }
+
+  // ====== NEW: helpers for edit & delete ======
+  Future<void> _openEdit(CalendarEventModel event) async {
+    final updated = await showDialog<bool>(
+      context: context,
+      builder: (_) => EditEventDialog(event: event),
+    );
+
+    if (updated == true && mounted) {
+      // If your streams don’t auto-refresh, you can force refresh:
+      // ref.invalidate(sharedCalendarEventsProvider);
+      // ref.invalidate(personalCalendarEventsProvider);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Event updated')),
+      );
+    }
+  }
+
+  Future<void> _confirmDelete(CalendarEventModel event) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        title: const Text('Delete event?'),
+        content: Text('“${event.title}” will be removed. This cannot be undone.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.tonal(
+            onPressed: () => Navigator.pop(context, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        await ref.read(calendarActionsProvider).deleteEvent(
+          event.id,
+          // syncToGoogle: true, // uncomment to force immediate Google deletion
+        );
+
+        if (mounted) {
+          // If your list isn’t reactive, force refresh:
+          ref.invalidate(sharedCalendarEventsProvider);
+          ref.invalidate(personalCalendarEventsProvider);
+
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('Event deleted')),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('Failed to delete: $e')),
+          );
+        }
+      }
+    }
+  }
+  // ====== END helpers ======
 
   @override
   Widget build(BuildContext context) {
@@ -365,6 +431,11 @@ class _SharedCalendarScreenState extends ConsumerState<SharedCalendarScreen> {
                 ),
               ],
             ),
+
+            // NEW: tap to edit
+            onTap: () => _openEdit(event),
+
+            // NEW: trailing actions incl. menu
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -373,8 +444,8 @@ class _SharedCalendarScreenState extends ConsumerState<SharedCalendarScreen> {
                     Icons.people,
                     size: 16,
                     color: Colors.green,
-                  ),
-                if (!event.isShared)
+                  )
+                else
                   const Icon(
                     Icons.person,
                     size: 16,
@@ -389,6 +460,19 @@ class _SharedCalendarScreenState extends ConsumerState<SharedCalendarScreen> {
                       color: Colors.blue,
                     ),
                   ),
+                PopupMenuButton<String>(
+                  onSelected: (value) {
+                    if (value == 'edit') {
+                      _openEdit(event);
+                    } else if (value == 'delete') {
+                      _confirmDelete(event);
+                    }
+                  },
+                  itemBuilder: (context) => const [
+                    PopupMenuItem(value: 'edit', child: Text('Edit')),
+                    PopupMenuItem(value: 'delete', child: Text('Delete')),
+                  ],
+                ),
               ],
             ),
           ),
