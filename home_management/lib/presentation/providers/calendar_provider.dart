@@ -85,10 +85,10 @@ final personalCalendarEventsProvider = StreamProvider.autoDispose<List<CalendarE
     return Stream.value([]);
   }
 
-  final startOfMonth = DateTime(selectedDate.year, selectedDate.month, 1);
-  final endOfMonth = DateTime(selectedDate.year, selectedDate.month + 1, 0, 23, 59, 59);
+  final startDate = DateTime.now().subtract(const Duration(days: 30));
+  final endDate = DateTime.now().add(const Duration(days: 365));
 
-  return repository.getPersonalEvents(userId, startOfMonth, endOfMonth);
+  return repository.getPersonalEvents(userId, startDate, endDate);
 });
 
 // Shared calendar events
@@ -101,10 +101,10 @@ final sharedCalendarEventsProvider = StreamProvider.autoDispose<List<CalendarEve
     return Stream.value([]);
   }
 
-  final startOfMonth = DateTime(selectedDate.year, selectedDate.month, 1);
-  final endOfMonth = DateTime(selectedDate.year, selectedDate.month + 1, 0, 23, 59, 59);
+  final startDate = DateTime.now().subtract(const Duration(days: 30));
+  final endDate = DateTime.now().add(const Duration(days: 365));
 
-  return repository.getSharedEvents(householdId, startOfMonth, endOfMonth);
+  return repository.getSharedEvents(householdId, startDate, endDate);
 });
 
 // Calendar actions provider
