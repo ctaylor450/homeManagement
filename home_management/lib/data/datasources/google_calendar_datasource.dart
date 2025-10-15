@@ -119,6 +119,73 @@ class GoogleCalendarDataSource {
     }
   }
 
+  // Add this helper inside GoogleCalendarDataSource
+  Future<Event?> upsertEventWithDerivedEnd({
+    required String calendarId,
+    required String? googleEventId,
+    required DateTime startTime,
+    DateTime? endTime,
+    required String title,
+    String? description,
+    bool isAllDay = false,
+  }) async {
+    if (_calendarApi == null) {
+      debugPrint('Calendar API not initialized');
+      return null;
+    }
+
+    // Decide all-day if you pass isAllDay or both times are midnight
+    final _isAllDay = isAllDay ||
+        (startTime.hour == 0 && startTime.minute == 0 &&
+        (endTime?.hour ?? 0) == 0 && (endTime?.minute ?? 0) == 0);
+
+    // Derive end if missing
+    DateTime derivedEnd;
+    if (_isAllDay) {
+      final startDate = DateTime(startTime.year, startTime.month, startTime.day);
+      final endBase = endTime ?? startDate.add(const Duration(days: 1)); // end.date is exclusive
+      derivedEnd = DateTime(endBase.year, endBase.month, endBase.day);
+    } else {
+      derivedEnd = endTime ?? startTime.add(const Duration(hours: 1));
+    }
+
+    final ev = Event()
+      ..summary = title
+      ..description = description
+      ..start = _isAllDay
+          ? EventDateTime(date: DateTime(startTime.year, startTime.month, startTime.day))
+          : EventDateTime(dateTime: startTime.toUtc(), timeZone: 'Europe/London')
+      ..end = _isAllDay
+          ? EventDateTime(date: DateTime(derivedEnd.year, derivedEnd.month, derivedEnd.day))
+          : EventDateTime(dateTime: derivedEnd.toUtc(), timeZone: 'Europe/London');
+
+    try {
+      if (googleEventId != null && googleEventId.isNotEmpty) {
+        // Fetch and merge to avoid dropping fields
+        final existing = await _calendarApi!.events.get(calendarId, googleEventId);
+        existing
+          ..summary = ev.summary
+          ..description = ev.description
+          ..start = ev.start
+          ..end = ev.end;
+        final updated = await _calendarApi!.events.update(existing, calendarId, googleEventId);
+        debugPrint('✅ Google event updated: ${updated.id}');
+        return updated;
+      } else {
+        final created = await _calendarApi!.events.insert(ev, calendarId);
+        debugPrint('✅ Google event created: ${created.id}');
+        return created;
+      }
+    } on DetailedApiRequestError catch (e) {
+      debugPrint('❌ Google error ${e.status}: ${e.message}');
+      rethrow; // important so callers don’t log false success
+    } catch (e) {
+      debugPrint('❌ Unexpected Google error: $e');
+      rethrow;
+    }
+  }
+
+
   // Delete event from Google Calendar
   Future<bool> deleteEvent(String calendarId, String eventId) async {
     try {

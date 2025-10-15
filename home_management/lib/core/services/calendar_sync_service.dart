@@ -1,5 +1,7 @@
 // lib/core/services/calendar_sync_service.dart
 // FIXED VERSION - Handles all-day events and uses correct queries to avoid index issues
+// + Uses Google upsert helper to guarantee end time (avoids 400 "Missing end time")
+// + Fixes nullable String (googleapis Event.id) non-promotion by assigning to a local non-null variable
 
 import 'package:flutter/foundation.dart';
 import 'package:googleapis/calendar/v3.dart' as google_calendar;
@@ -29,9 +31,19 @@ class CalendarSyncService {
   DateTime? _normalizeEnd(google_calendar.Event e) {
     final dt = e.end?.dateTime;
     if (dt != null) return dt;
-    final d = e.end?.date; // exclusive for all-day; keep as-is (local midnight of next day)
+    final d = e.end?.date; // exclusive for all-day; local midnight of next day
     if (d == null) return null;
     return d.toLocal();
+  }
+
+  bool _isAllDayFromTimes(DateTime start, DateTime? end) {
+    final e = end ?? start;
+    return start.hour == 0 &&
+        start.minute == 0 &&
+        start.second == 0 &&
+        e.hour == 0 &&
+        e.minute == 0 &&
+        e.second == 0;
   }
 
   // ============ PERSONAL CALENDAR SYNC (FIXED - No Index Issues) ============
@@ -290,11 +302,10 @@ class CalendarSyncService {
             googleEvent,
           );
 
-          if (createdEvent != null && createdEvent.id != null) {
-            await _calendarRepository.updateEvent(
-              event.id,
-              {'googleEventId': createdEvent.id},
-            );
+          if (createdEvent != null && (createdEvent.id ?? '').isNotEmpty) {
+            // 👇 Assign to a local non-nullable variable to satisfy Dart's non-promotion for public fields.
+            final String googleId = createdEvent.id!;
+            await _calendar_repository_update_event_id(event.id, googleId);
             pushed++;
             debugPrint('✅ Successfully pushed event to Google: ${event.title}');
           }
@@ -361,10 +372,11 @@ class CalendarSyncService {
         googleEvent,
       );
 
-      if (createdEvent != null) {
+      if (createdEvent != null && (createdEvent.id ?? '').isNotEmpty) {
+        final String googleId = createdEvent.id!;
         await _calendarRepository.updateEvent(
           eventId,
-          {'googleEventId': createdEvent.id},
+          {'googleEventId': googleId},
         );
       }
     } catch (e) {
@@ -397,7 +409,7 @@ class CalendarSyncService {
       );
 
       final eventWithGoogleId = event.copyWith(
-        googleEventId: createdEvent?.id,
+        googleEventId: createdEvent?.id, // your model likely allows null here
         isShared: true,
       );
 
@@ -417,35 +429,25 @@ class CalendarSyncService {
     required Map<String, dynamic> updates,
   }) async {
     try {
+      // 1) Update Firestore first
       await _calendarRepository.updateEvent(eventId, updates);
 
-      if (updates.containsKey('title') ||
-          updates.containsKey('startTime') ||
-          updates.containsKey('endTime') ||
-          updates.containsKey('description')) {
-        final googleEvent = google_calendar.Event(
-          summary: updates['title'],
-          description: updates['description'],
-          start: updates['startTime'] != null
-              ? google_calendar.EventDateTime(
-                  dateTime: updates['startTime'],
-                  timeZone: 'UTC',
-                )
-              : null,
-          end: updates['endTime'] != null
-              ? google_calendar.EventDateTime(
-                  dateTime: updates['endTime'],
-                  timeZone: 'UTC',
-                )
-              : null,
-        );
+      // 2) Fetch authoritative event (may contain fields not present in updates)
+      final ev = await _calendarRepository.getEventById(eventId);
+      if (ev == null) return;
 
-        await _googleCalendarDataSource.updateEvent(
-          googleCalendarId,
-          googleEventId,
-          googleEvent,
-        );
-      }
+      // 3) Use upsert helper to guarantee end time and handle all-day correctness
+      await _googleCalendarDataSource.upsertEventWithDerivedEnd(
+        calendarId: googleCalendarId,
+        googleEventId: googleEventId,
+        startTime: ev.startTime,
+        endTime: ev.endTime,
+        title: ev.title,
+        description: ev.description,
+        isAllDay: _isAllDayFromTimes(ev.startTime, ev.endTime),
+      );
+
+      debugPrint('✅ Updated event in Google Calendar');
     } catch (e) {
       debugPrint('Error updating event in both calendars: $e');
       rethrow;
@@ -459,37 +461,25 @@ class CalendarSyncService {
     required Map<String, dynamic> updates,
   }) async {
     try {
+      // 1) Update Firestore first
       await _calendarRepository.updateEvent(eventId, updates);
 
-      if (updates.containsKey('title') ||
-          updates.containsKey('startTime') ||
-          updates.containsKey('endTime') ||
-          updates.containsKey('description')) {
-        final googleEvent = google_calendar.Event(
-          summary: updates['title'],
-          description: updates['description'],
-          start: updates['startTime'] != null
-              ? google_calendar.EventDateTime(
-                  dateTime: updates['startTime'],
-                  timeZone: 'UTC',
-                )
-              : null,
-          end: updates['endTime'] != null
-              ? google_calendar.EventDateTime(
-                  dateTime: updates['endTime'],
-                  timeZone: 'UTC',
-                )
-              : null,
-        );
+      // 2) Fetch authoritative event after write
+      final ev = await _calendarRepository.getEventById(eventId);
+      if (ev == null) return;
 
-        await _googleCalendarDataSource.updateEvent(
-          sharedGoogleCalendarId,
-          googleEventId,
-          googleEvent,
-        );
+      // 3) Upsert on Google (derive end when missing; handle all-day)
+      await _googleCalendarDataSource.upsertEventWithDerivedEnd(
+        calendarId: sharedGoogleCalendarId,
+        googleEventId: googleEventId,
+        startTime: ev.startTime,
+        endTime: ev.endTime,
+        title: ev.title,
+        description: ev.description,
+        isAllDay: _isAllDayFromTimes(ev.startTime, ev.endTime),
+      );
 
-        debugPrint('Updated shared event in both calendars');
-      }
+      debugPrint('✅ Updated shared event in both calendars');
     } catch (e) {
       debugPrint('Error updating shared event in both calendars: $e');
       rethrow;
@@ -507,7 +497,7 @@ class CalendarSyncService {
       if (googleEventId != null) {
         await _googleCalendarDataSource.deleteEvent(
           googleCalendarId,
-          googleEventId,
+          googleEventId!, // force non-null after explicit check
         );
       }
     } catch (e) {
@@ -527,7 +517,7 @@ class CalendarSyncService {
       if (googleEventId != null) {
         await _googleCalendarDataSource.deleteEvent(
           sharedGoogleCalendarId,
-          googleEventId,
+          googleEventId!, // force non-null after explicit check
         );
         debugPrint('Deleted shared event from both calendars');
       }
@@ -555,5 +545,13 @@ class CalendarSyncService {
       debugPrint('Error checking availability: $e');
       return true;
     }
+  }
+
+  // Small helper to keep repository update for pushed shared events tidy
+  Future<void> _calendar_repository_update_event_id(
+    String eventId,
+    String googleId,
+  ) async {
+    await _calendarRepository.updateEvent(eventId, {'googleEventId': googleId});
   }
 }
