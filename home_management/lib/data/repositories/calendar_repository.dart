@@ -39,6 +39,10 @@ class CalendarRepository {
         .snapshots()
         .map((snapshot) => snapshot.docs
             .map((doc) => CalendarEventModel.fromFirestore(doc))
+            .where((event) => 
+                // Only include events within the date range
+                event.startTime.isAfter(start) && 
+                event.startTime.isBefore(end))
             .toList());
   }
 

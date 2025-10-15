@@ -307,45 +307,130 @@ class CalendarSyncService {
   // ============ EXISTING: Personal calendar sync methods ============
   
   Future<void> syncGoogleCalendar(
-    String userId,
-    String householdId,
-    String googleCalendarId,
-  ) async {
-    try {
-      final now = DateTime.now();
-      final start = now.subtract(const Duration(days: 30));
-      final end = now.add(const Duration(days: 90));
+  String userId,
+  String householdId,
+  String googleCalendarId,
+) async {
+  try {
+    final now = DateTime.now();
+    final start = now.subtract(const Duration(days: 30));
+    final end = now.add(const Duration(days: 365)); // Extended to 1 year
 
-      final googleEvents = await _googleCalendarDataSource.fetchEvents(
-        googleCalendarId,
-        start,
-        end,
-      );
+    debugPrint('📅 Syncing personal calendar...');
+    debugPrint('   Date range: $start to $end');
 
-      for (final event in googleEvents) {
-        if (event.start?.dateTime == null || event.end?.dateTime == null) {
-          continue;
+    final googleEvents = await _googleCalendarDataSource.fetchEvents(
+      googleCalendarId,
+      start,
+      end,
+    );
+
+    debugPrint('📥 Found ${googleEvents.length} events in Google Calendar');
+
+    // Get existing personal events
+    final existingEvents = await _calendarRepository
+        .getEventsInRange(householdId, start, end)
+        .first;
+    
+    final existingPersonalEvents = existingEvents
+        .where((e) => !e.isShared && e.userId == userId)
+        .toList();
+    
+    debugPrint('📱 Found ${existingPersonalEvents.length} personal events in Firestore');
+
+    // Create lookup map
+    final existingEventsByGoogleId = <String, CalendarEventModel>{};
+    for (final event in existingPersonalEvents) {
+      if (event.googleEventId != null) {
+        existingEventsByGoogleId[event.googleEventId!] = event;
+      }
+    }
+
+    int created = 0;
+    int updated = 0;
+
+    for (final googleEvent in googleEvents) {
+      if (googleEvent.start?.dateTime == null || 
+          googleEvent.end?.dateTime == null ||
+          googleEvent.id == null) {
+        continue;
+      }
+
+      final existingEvent = existingEventsByGoogleId[googleEvent.id];
+
+      if (existingEvent != null) {
+        // Update if needed
+        final updates = <String, dynamic>{};
+        
+        if (existingEvent.title != (googleEvent.summary ?? 'Untitled Event')) {
+          updates['title'] = googleEvent.summary ?? 'Untitled Event';
+        }
+        
+        if (existingEvent.description != googleEvent.description) {
+          updates['description'] = googleEvent.description;
+        }
+        
+        if (existingEvent.startTime != googleEvent.start!.dateTime) {
+          updates['startTime'] = googleEvent.start!.dateTime;
+        }
+        
+        if (existingEvent.endTime != googleEvent.end!.dateTime) {
+          updates['endTime'] = googleEvent.end!.dateTime;
         }
 
+        if (updates.isNotEmpty) {
+          await _calendarRepository.updateEvent(existingEvent.id, updates);
+          updated++;
+          debugPrint('✏️ Updated: ${googleEvent.summary}');
+        }
+      } else {
+        // Create new event
         final calendarEvent = CalendarEventModel(
           id: '',
-          title: event.summary ?? 'Untitled Event',
-          description: event.description,
-          startTime: event.start!.dateTime!,
-          endTime: event.end!.dateTime!,
+          title: googleEvent.summary ?? 'Untitled Event',
+          description: googleEvent.description,
+          startTime: googleEvent.start!.dateTime!,
+          endTime: googleEvent.end!.dateTime!,
           userId: userId,
           householdId: householdId,
           isShared: false,
-          googleEventId: event.id,
+          googleEventId: googleEvent.id,
           type: EventType.event,
         );
 
         await _calendarRepository.createEvent(calendarEvent);
+        created++;
+        debugPrint('➕ Created: ${googleEvent.summary}');
       }
-    } catch (e) {
-      debugPrint('Error syncing Google Calendar: $e');
     }
+
+    // Delete events no longer in Google
+    final googleEventIds = googleEvents
+        .where((e) => e.id != null)
+        .map((e) => e.id!)
+        .toSet();
+
+    int deleted = 0;
+    for (final existingEvent in existingPersonalEvents) {
+      if (existingEvent.googleEventId != null &&
+          !googleEventIds.contains(existingEvent.googleEventId)) {
+        await _calendarRepository.deleteEvent(existingEvent.id);
+        deleted++;
+        debugPrint('🗑️ Deleted: ${existingEvent.title}');
+      }
+    }
+
+    debugPrint('');
+    debugPrint('✨ Personal Calendar Sync Summary:');
+    debugPrint('   ➕ Created: $created');
+    debugPrint('   ✏️  Updated: $updated');
+    debugPrint('   🗑️  Deleted: $deleted');
+    debugPrint('✅ Personal calendar sync completed');
+  } catch (e) {
+    debugPrint('❌ Error syncing personal calendar: $e');
+    rethrow;
   }
+}
 
   Future<void> createEventInBoth({
     required CalendarEventModel event,
