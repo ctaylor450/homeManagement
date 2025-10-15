@@ -10,6 +10,7 @@ import 'presentation/providers/auto_sync_provider.dart'; // NEW IMPORT
 import 'presentation/screens/auth/login_screen.dart';
 import 'presentation/screens/home/home_screen.dart';
 import 'package:google_sign_in/google_sign_in.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 const kWebClientId = '955299526376-8o87c88o9s61rt1kgjhccdh00qjt5p46.apps.googleusercontent.com';
 
@@ -138,6 +139,17 @@ class _MyAppState extends ConsumerState<MyApp> with WidgetsBindingObserver {
   @override
   Widget build(BuildContext context) {
     final authState = ref.watch(authStateProvider);
+
+    // Ensure FCM token is saved whenever auth state changes
+    ref.listen<AsyncValue<User?>>(authStateProvider, (previous, next) async {
+      final user = next.value;
+      if (user != null) {
+        // Tell your NotificationService a user is logged in so it can store/refresh the token
+        await NotificationService().bindUser(user.uid);
+      } else {
+        await NotificationService().unbindUser(); // optional no-op if you prefer
+      }
+    });
 
     // Listen to auto-sync preference changes
     ref.listen<AsyncValue<bool>>(cal.autoSyncEnabledProvider, (previous, next) {

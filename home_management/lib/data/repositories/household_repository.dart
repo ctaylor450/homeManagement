@@ -5,6 +5,7 @@ import '../../core/constants/firebase_constants.dart';
 
 class HouseholdRepository {
   final FirebaseFirestore _firestore;
+  // ignore: unused_field
   final Uuid _uuid;
 
   HouseholdRepository({FirebaseFirestore? firestore})

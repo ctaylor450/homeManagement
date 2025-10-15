@@ -497,7 +497,7 @@ class CalendarSyncService {
       if (googleEventId != null) {
         await _googleCalendarDataSource.deleteEvent(
           googleCalendarId,
-          googleEventId!, // force non-null after explicit check
+          googleEventId, // force non-null after explicit check
         );
       }
     } catch (e) {
@@ -517,7 +517,7 @@ class CalendarSyncService {
       if (googleEventId != null) {
         await _googleCalendarDataSource.deleteEvent(
           sharedGoogleCalendarId,
-          googleEventId!, // force non-null after explicit check
+          googleEventId, // force non-null after explicit check
         );
         debugPrint('Deleted shared event from both calendars');
       }
@@ -548,6 +548,7 @@ class CalendarSyncService {
   }
 
   // Small helper to keep repository update for pushed shared events tidy
+  // ignore: non_constant_identifier_names
   Future<void> _calendar_repository_update_event_id(
     String eventId,
     String googleId,

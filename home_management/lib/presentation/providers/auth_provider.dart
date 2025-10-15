@@ -7,7 +7,6 @@ import '../../data/datasources/firebase_datasource.dart';
 import '../../data/datasources/google_calendar_datasource.dart';
 import '../../data/repositories/user_repository.dart';
 import '../../data/models/user_model.dart';
-import 'calendar_provider.dart';
 
 /// Providers
 final firebaseDataSourceProvider = Provider<FirebaseDataSource>((ref) {

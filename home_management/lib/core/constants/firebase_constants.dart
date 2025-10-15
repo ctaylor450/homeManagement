@@ -5,6 +5,9 @@ class FirebaseConstants {
   static const String tasksCollection = 'tasks';
   static const String calendarEventsCollection = 'calendar_events';
   static const String notificationsCollection = 'notifications';
+
+  // Subcollections
+  static const String fcmTokensSubcollection = 'fcmTokens';
   
   // Field Names
   static const String userId = 'userId';

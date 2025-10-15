@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 class FirebaseDataSource {
   final FirebaseAuth _auth;
+  // ignore: unused_field
   final FirebaseFirestore _firestore;
 
   FirebaseDataSource({
