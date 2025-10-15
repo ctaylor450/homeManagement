@@ -1,153 +1,178 @@
+"use strict";
+
 /**
- * Import function triggers from their respective submodules:
- *
- * const {onCall} = require("firebase-functions/v2/https");
- * const {onDocumentWritten} = require("firebase-functions/v2/firestore");
- *
- * See a full list of supported triggers at https://firebase.google.com/docs/functions
+ * Cloud Functions for notifying household members when a new
+ * public task is created.
  */
 
-const {onRequest} = require("firebase-functions/v2/https");
-const logger = require("firebase-functions/logger");
 const {setGlobalOptions} = require("firebase-functions/v2");
-// For cost control, you can set the maximum number of containers that can be
-// running at the same time. This helps mitigate the impact of unexpected
-// traffic spikes by instead downgrading performance. This limit is a
-// per-function limit. You can override the limit for each function using the
-// `maxInstances` option in the function's options, e.g.
-// `onRequest({ maxInstances: 5 }, (req, res) => { ... })`.
-// NOTE: setGlobalOptions does not apply to functions using the v1 API. V1
-// functions should each use functions.runWith({ maxInstances: 10 }) instead.
-// In the v1 API, each function can only serve one request per container, so
-// this will be the maximum concurrent request count.
-setGlobalOptions({maxInstances: 10});
-const functions = require("firebase-functions");
-const admin = require("firebase-admin");
+const {onDocumentCreated} = require("firebase-functions/v2/firestore");
+const {initializeApp} = require("firebase-admin/app");
+const {getFirestore} = require("firebase-admin/firestore");
+const {getMessaging} = require("firebase-admin/messaging");
 
-admin.initializeApp();
+setGlobalOptions({maxInstances: 10});
+
+initializeApp();
 
 /**
- * Trigger: fires when a new task is added to `tasks/{taskId}`.
- * Sends push notifications to all members of that task's household
- * (except the creator) if the task is public.
+ * Trigger: on create of `tasks/{taskId}`.
+ * Sends push notifications to all household members (except creator)
+ * when the task's `status` is "public".
  *
- * Task document fields expected:
+ * Task fields expected:
  *  - householdId: string
- *  - createdBy: string (uid of user who created it)
+ *  - createdBy: string (uid)
  *  - title: string
- *  - status: "public" or "private"
+ *  - status: "public" | "private"
  */
-exports.notifyOnNewPublicTask = functions.firestore
-  .document("tasks/{taskId}")
-  .onCreate(async (snap, context) => {
-    const task = snap.data() || {};
+exports.notifyOnNewPublicTask = onDocumentCreated(
+    "tasks/{taskId}",
+    async (event) => {
+      const snap = event.data;
+      if (!snap) {
+        console.log("No data in event");
+        return null;
+      }
 
-    // ✅ Only send for public tasks
-    if (task.status !== "public") return null;
+      const task = snap.data() || {};
 
-    const householdId = task.householdId;
-    const title = task.title || "New household task";
-    const createdBy = task.createdBy || null;
+      if (task.status !== "public") {
+        const id = event.params.taskId || "(no id)";
+        console.log("Skipping: task not public:", id);
+        return null;
+      }
 
-    if (!householdId) return null;
+      const householdId = task.householdId;
+      const createdBy = task.createdBy || null;
+      const title = task.title || "New household task";
 
-    // 1️⃣ Get household members
-    const householdSnap = await admin
-      .firestore()
-      .collection("households")
-      .doc(householdId)
-      .get();
+      if (!householdId) {
+        console.log("Skipping: missing householdId");
+        return null;
+      }
 
-    if (!householdSnap.exists) {
-      console.log(`No household found for ID: ${householdId}`);
-      return null;
-    }
+      // 1) Load household members
+      const db = getFirestore();
+      const householdRef = db.collection("households").doc(householdId);
 
-    const hhData = householdSnap.data() || {};
-    let memberIds = [];
+      const householdSnap = await householdRef.get();
 
-    // Handle different possible member structures
-    if (Array.isArray(hhData.memberIds)) {
-      memberIds = hhData.memberIds.filter(Boolean);
-    } else if (Array.isArray(hhData.members)) {
-      memberIds = hhData.members.filter(Boolean);
-    } else if (typeof hhData.members === "object") {
-      memberIds = Object.keys(hhData.members);
-    }
+      if (!householdSnap.exists) {
+        console.log("No household for ID:", householdId);
+        return null;
+      }
 
-    const recipients = memberIds.filter((uid) => uid !== createdBy);
-    if (!recipients.length) {
-      console.log("No recipients to notify");
-      return null;
-    }
+      const hhData = householdSnap.data() || {};
+      let memberIds = [];
 
-    // 2️⃣ Collect FCM tokens from each recipient
-    const tokenSnaps = await Promise.all(
-      recipients.map((uid) =>
-        admin
-          .firestore()
-          .collection("users")
-          .doc(uid)
-          .collection("fcmTokens")
-          .get()
-      )
-    );
+      // Support several shapes
+      if (Array.isArray(hhData.memberIds)) {
+        memberIds = hhData.memberIds.filter(Boolean);
+      } else if (Array.isArray(hhData.members)) {
+        memberIds = hhData.members.filter(Boolean);
+      } else if (
+        hhData &&
+      typeof hhData.members === "object" &&
+      hhData.members !== null
+      ) {
+        memberIds = Object.keys(hhData.members);
+      }
 
-    const tokens = tokenSnaps
-      .flatMap((snap) => snap.docs.map((d) => d.get("token")))
-      .filter(Boolean);
+      const recipients = memberIds.filter((uid) => {
+        return uid && uid !== createdBy;
+      });
 
-    if (!tokens.length) {
-      console.log("No tokens found for recipients");
-      return null;
-    }
+      if (!recipients.length) {
+        console.log("No recipients after excluding creator.");
+        return null;
+      }
 
-    // 3️⃣ Prepare the push notification
-    const message = {
-      tokens,
-      notification: {
-        title: "New Public Task",
-        body: `“${title}” was added to your household.`,
-      },
-      data: {
-        type: "public_task_created",
-        taskId: context.params.taskId,
-        householdId: householdId,
-        createdBy: createdBy || "",
-      },
-      android: { priority: "high" },
-      apns: { payload: { aps: { sound: "default" } } },
-    };
+      // 2) Collect tokens for recipients
+      const tokenSnapPromises = recipients.map((uid) => {
+        return db.collection("users")
+            .doc(uid)
+            .collection("fcmTokens")
+            .get();
+      });
 
-    // 4️⃣ Send notifications
-    const response = await admin.messaging().sendEachForMulticast(message);
-    console.log(`✅ Sent to ${response.successCount}/${tokens.length} devices.`);
+      const tokenSnaps = await Promise.all(tokenSnapPromises);
 
-    // 5️⃣ Clean up invalid tokens
-    const invalidTokens = [];
-    response.responses.forEach((res, i) => {
-      if (!res.success) {
-        const code = res.error?.code || "";
-        if (
-          code === "messaging/registration-token-not-registered" ||
-          code === "messaging/invalid-registration-token"
-        ) {
-          invalidTokens.push(tokens[i]);
+      // Avoid flatMap for older parsers
+      const tokens = [];
+      for (let i = 0; i < tokenSnaps.length; i++) {
+        const snapI = tokenSnaps[i];
+        for (let j = 0; j < snapI.docs.length; j++) {
+          const d = snapI.docs[j];
+          const t = d.get("token");
+          if (t) {
+            tokens.push(t);
+          }
         }
       }
-    });
 
-    await Promise.all(
-      invalidTokens.map(async (tok) => {
-        const q = await admin
-          .firestore()
-          .collectionGroup("fcmTokens")
-          .where("token", "==", tok)
-          .get();
-        await Promise.all(q.docs.map((d) => d.ref.delete()));
-      })
-    );
+      if (!tokens.length) {
+        console.log("No tokens found for recipients.");
+        return null;
+      }
 
-    return null;
-  });
+      // 3) Build message
+      const taskId = event.params.taskId ?
+      String(event.params.taskId) : "";
 
+      const message = {
+        tokens: tokens,
+        notification: {
+          title: "New Public Task",
+          body: `"${title}" was added to your household.`,
+        },
+        data: {
+          type: "public_task_created",
+          taskId: taskId,
+          householdId: String(householdId),
+          createdBy: createdBy ? String(createdBy) : "",
+        },
+        android: {priority: "high"},
+        apns: {payload: {aps: {sound: "default"}}},
+      };
+
+      // 4) Send
+      const messaging = getMessaging();
+      const response = await messaging.sendEachForMulticast(message);
+      console.log(
+          `Sent to ${response.successCount}/${tokens.length} devices.`,
+      );
+
+      // 5) Remove invalid tokens
+      const invalidTokens = [];
+      for (let k = 0; k < response.responses.length; k++) {
+        const r = response.responses[k];
+        if (!r.success) {
+          const code = (r.error && r.error.code) ? r.error.code : "";
+          if (
+            code === "messaging/registration-token-not-registered" ||
+          code === "messaging/invalid-registration-token"
+          ) {
+            invalidTokens.push(tokens[k]);
+          }
+        }
+      }
+
+      if (invalidTokens.length) {
+        console.log("Cleaning invalid tokens:", invalidTokens.length);
+        const deletions = [];
+        for (let m = 0; m < invalidTokens.length; m++) {
+          const tok = invalidTokens[m];
+          const q = await db.collectionGroup("fcmTokens")
+              .where("token", "==", tok)
+              .get();
+          q.forEach((doc) => {
+            deletions.push(doc.ref.delete());
+          });
+        }
+        await Promise.all(deletions);
+      }
+
+      return null;
+    },
+);
