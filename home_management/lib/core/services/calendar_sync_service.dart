@@ -1,5 +1,5 @@
 // lib/core/services/calendar_sync_service.dart
-// FIXED VERSION - Uses correct queries to avoid index issues
+// FIXED VERSION - Handles all-day events and uses correct queries to avoid index issues
 
 import 'package:flutter/foundation.dart';
 import 'package:googleapis/calendar/v3.dart' as google_calendar;
@@ -15,6 +15,24 @@ class CalendarSyncService {
     this._googleCalendarDataSource,
     this._calendarRepository,
   );
+
+  // Helper to normalize Google event start/end into DateTime (supports all-day)
+  DateTime? _normalizeStart(google_calendar.Event e) {
+    final dt = e.start?.dateTime;
+    if (dt != null) return dt;
+    final d = e.start?.date; // all-day (YYYY-MM-DD), end.date is exclusive
+    if (d == null) return null;
+    // Treat all-day start as local midnight of that date
+    return d.toLocal();
+  }
+
+  DateTime? _normalizeEnd(google_calendar.Event e) {
+    final dt = e.end?.dateTime;
+    if (dt != null) return dt;
+    final d = e.end?.date; // exclusive for all-day; keep as-is (local midnight of next day)
+    if (d == null) return null;
+    return d.toLocal();
+  }
 
   // ============ PERSONAL CALENDAR SYNC (FIXED - No Index Issues) ============
   Future<void> syncGoogleCalendar(
@@ -42,7 +60,7 @@ class CalendarSyncService {
       final existingPersonalEvents = await _calendarRepository
           .getPersonalEvents(userId, start, end)
           .first;
-      
+
       debugPrint('📱 Found ${existingPersonalEvents.length} personal events in Firestore');
 
       // Create lookup map
@@ -57,32 +75,38 @@ class CalendarSyncService {
       int updated = 0;
 
       for (final googleEvent in googleEvents) {
-        if (googleEvent.start?.dateTime == null || 
-            googleEvent.end?.dateTime == null ||
-            googleEvent.id == null) {
+        final startDT = _normalizeStart(googleEvent);
+        final endDT = _normalizeEnd(googleEvent);
+        final id = googleEvent.id;
+
+        if (startDT == null || endDT == null || id == null) {
+          // Skip events we can't normalize (rare, malformed events)
           continue;
         }
 
-        final existingEvent = existingEventsByGoogleId[googleEvent.id];
+        final existingEvent = existingEventsByGoogleId[id];
 
         if (existingEvent != null) {
           // Update if needed
           final updates = <String, dynamic>{};
-          
-          if (existingEvent.title != (googleEvent.summary ?? 'Untitled Event')) {
-            updates['title'] = googleEvent.summary ?? 'Untitled Event';
+
+          final newTitle = googleEvent.summary ?? 'Untitled Event';
+          final newDesc = googleEvent.description;
+
+          if (existingEvent.title != newTitle) {
+            updates['title'] = newTitle;
           }
-          
-          if (existingEvent.description != googleEvent.description) {
-            updates['description'] = googleEvent.description;
+
+          if (existingEvent.description != newDesc) {
+            updates['description'] = newDesc;
           }
-          
-          if (existingEvent.startTime != googleEvent.start!.dateTime) {
-            updates['startTime'] = googleEvent.start!.dateTime;
+
+          if (existingEvent.startTime != startDT) {
+            updates['startTime'] = startDT;
           }
-          
-          if (existingEvent.endTime != googleEvent.end!.dateTime) {
-            updates['endTime'] = googleEvent.end!.dateTime;
+
+          if (existingEvent.endTime != endDT) {
+            updates['endTime'] = endDT;
           }
 
           if (updates.isNotEmpty) {
@@ -91,17 +115,17 @@ class CalendarSyncService {
             debugPrint('✏️  Updated: ${googleEvent.summary}');
           }
         } else {
-          // FIXED: Create new personal event with proper userId
+          // Create new personal event with proper userId
           final calendarEvent = CalendarEventModel(
             id: '',
             title: googleEvent.summary ?? 'Untitled Event',
             description: googleEvent.description,
-            startTime: googleEvent.start!.dateTime!,
-            endTime: googleEvent.end!.dateTime!,
+            startTime: startDT,
+            endTime: endDT,
             userId: userId,
             householdId: householdId,
             isShared: false,
-            googleEventId: googleEvent.id,
+            googleEventId: id,
             type: EventType.event,
           );
 
@@ -165,7 +189,7 @@ class CalendarSyncService {
       final existingSharedEvents = await _calendarRepository
           .getSharedEvents(householdId, start, end)
           .first;
-      
+
       debugPrint('📱 Found ${existingSharedEvents.length} shared events in Firestore');
 
       final existingEventsByGoogleId = <String, CalendarEventModel>{};
@@ -177,33 +201,38 @@ class CalendarSyncService {
 
       int created = 0;
       int updated = 0;
-      
+
       for (final googleEvent in googleEvents) {
-        if (googleEvent.start?.dateTime == null || 
-            googleEvent.end?.dateTime == null ||
-            googleEvent.id == null) {
+        final startDT = _normalizeStart(googleEvent);
+        final endDT = _normalizeEnd(googleEvent);
+        final id = googleEvent.id;
+
+        if (startDT == null || endDT == null || id == null) {
           continue;
         }
 
-        final existingEvent = existingEventsByGoogleId[googleEvent.id];
+        final existingEvent = existingEventsByGoogleId[id];
 
         if (existingEvent != null) {
           final updates = <String, dynamic>{};
-          
-          if (existingEvent.title != (googleEvent.summary ?? 'Untitled Event')) {
-            updates['title'] = googleEvent.summary ?? 'Untitled Event';
+
+          final newTitle = googleEvent.summary ?? 'Untitled Event';
+          final newDesc = googleEvent.description;
+
+          if (existingEvent.title != newTitle) {
+            updates['title'] = newTitle;
           }
-          
-          if (existingEvent.description != googleEvent.description) {
-            updates['description'] = googleEvent.description;
+
+          if (existingEvent.description != newDesc) {
+            updates['description'] = newDesc;
           }
-          
-          if (existingEvent.startTime != googleEvent.start!.dateTime) {
-            updates['startTime'] = googleEvent.start!.dateTime;
+
+          if (existingEvent.startTime != startDT) {
+            updates['startTime'] = startDT;
           }
-          
-          if (existingEvent.endTime != googleEvent.end!.dateTime) {
-            updates['endTime'] = googleEvent.end!.dateTime;
+
+          if (existingEvent.endTime != endDT) {
+            updates['endTime'] = endDT;
           }
 
           if (updates.isNotEmpty) {
@@ -217,12 +246,12 @@ class CalendarSyncService {
             id: '',
             title: googleEvent.summary ?? 'Untitled Event',
             description: googleEvent.description,
-            startTime: googleEvent.start!.dateTime!,
-            endTime: googleEvent.end!.dateTime!,
+            startTime: startDT,
+            endTime: endDT,
             userId: '',
             householdId: householdId,
             isShared: true,
-            googleEventId: googleEvent.id,
+            googleEventId: id,
             type: EventType.event,
           );
 
@@ -238,11 +267,11 @@ class CalendarSyncService {
       ).toList();
 
       int pushed = 0;
-      
+
       for (final event in eventsToSync) {
         try {
           debugPrint('📤 Pushing local event to Google Calendar: ${event.title}');
-          
+
           final googleEvent = google_calendar.Event(
             summary: event.title,
             description: event.description,
@@ -281,7 +310,7 @@ class CalendarSyncService {
           .toSet();
 
       int deleted = 0;
-      
+
       for (final existingEvent in existingSharedEvents) {
         if (existingEvent.googleEventId != null &&
             !googleEventIds.contains(existingEvent.googleEventId)) {
@@ -306,7 +335,7 @@ class CalendarSyncService {
   }
 
   // ============ CREATE/UPDATE/DELETE METHODS ============
-  
+
   Future<void> createEventInBoth({
     required CalendarEventModel event,
     required String googleCalendarId,
@@ -371,9 +400,9 @@ class CalendarSyncService {
         googleEventId: createdEvent?.id,
         isShared: true,
       );
-      
+
       await _calendarRepository.createEvent(eventWithGoogleId);
-      
+
       debugPrint('Created shared event in both Google Calendar and Firestore: ${event.title}');
     } catch (e) {
       debugPrint('Error creating shared event in both calendars: $e');
@@ -436,7 +465,6 @@ class CalendarSyncService {
           updates.containsKey('startTime') ||
           updates.containsKey('endTime') ||
           updates.containsKey('description')) {
-        
         final googleEvent = google_calendar.Event(
           summary: updates['title'],
           description: updates['description'],
@@ -459,7 +487,7 @@ class CalendarSyncService {
           googleEventId,
           googleEvent,
         );
-        
+
         debugPrint('Updated shared event in both calendars');
       }
     } catch (e) {
