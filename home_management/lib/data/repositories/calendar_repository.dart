@@ -1,3 +1,7 @@
+// lib/data/repositories/calendar_repository.dart
+// 
+// This repository uses optimized Firestore queries that work with existing indexes
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../models/calendar_event_model.dart';
 import '../../core/constants/firebase_constants.dart';
@@ -8,7 +12,7 @@ class CalendarRepository {
   CalendarRepository({FirebaseFirestore? firestore})
       : _firestore = firestore ?? FirebaseFirestore.instance;
 
-  // Get events for a date range
+  // Get events for a date range (for main calendar view)
   Stream<List<CalendarEventModel>> getEventsInRange(
     String householdId,
     DateTime start,
@@ -26,7 +30,7 @@ class CalendarRepository {
             .toList());
   }
 
-  // Get personal events
+  // OPTIMIZED: Get personal events - uses existing index
   Stream<List<CalendarEventModel>> getPersonalEvents(
     String userId,
     DateTime start,
@@ -35,18 +39,24 @@ class CalendarRepository {
     return _firestore
         .collection(FirebaseConstants.calendarEventsCollection)
         .where('userId', isEqualTo: userId)
+        .where('isShared', isEqualTo: false)
         .orderBy('startTime')
         .snapshots()
-        .map((snapshot) => snapshot.docs
-            .map((doc) => CalendarEventModel.fromFirestore(doc))
-            .where((event) => 
-                // Only include events within the date range
-                event.startTime.isAfter(start) && 
-                event.startTime.isBefore(end))
-            .toList());
+        .map((snapshot) {
+          final allEvents = snapshot.docs
+              .map((doc) => CalendarEventModel.fromFirestore(doc))
+              .toList();
+          
+          // Filter by date range in memory to avoid complex index
+          return allEvents
+              .where((event) =>
+                  !event.startTime.isBefore(start) &&
+                  event.startTime.isBefore(end))
+              .toList();
+        });
   }
 
-  // Get shared events
+  // OPTIMIZED: Get shared events - uses existing index  
   Stream<List<CalendarEventModel>> getSharedEvents(
     String householdId,
     DateTime start,
@@ -58,9 +68,18 @@ class CalendarRepository {
         .where('isShared', isEqualTo: true)
         .orderBy('startTime')
         .snapshots()
-        .map((snapshot) => snapshot.docs
-            .map((doc) => CalendarEventModel.fromFirestore(doc))
-            .toList());
+        .map((snapshot) {
+          final allEvents = snapshot.docs
+              .map((doc) => CalendarEventModel.fromFirestore(doc))
+              .toList();
+          
+          // Filter by date range in memory to avoid complex index
+          return allEvents
+              .where((event) =>
+                  !event.startTime.isBefore(start) &&
+                  event.startTime.isBefore(end))
+              .toList();
+        });
   }
 
   // Create event
@@ -103,12 +122,27 @@ class CalendarRepository {
     }
   }
 
-  // Check availability
+  // Get event by ID
+  Future<CalendarEventModel?> getEventById(String eventId) async {
+    try {
+      final doc = await _firestore
+          .collection(FirebaseConstants.calendarEventsCollection)
+          .doc(eventId)
+          .get();
+
+      if (doc.exists) {
+        return CalendarEventModel.fromFirestore(doc);
+      }
+      return null;
+    } catch (e) {
+      print('Error getting event: $e');
+      rethrow;
+    }
+  }
+
+  // Check availability (no overlapping events)
   Future<bool> checkAvailability(
-    String userId,
-    DateTime start,
-    DateTime end,
-  ) async {
+      String userId, DateTime start, DateTime end) async {
     try {
       final snapshot = await _firestore
           .collection(FirebaseConstants.calendarEventsCollection)
